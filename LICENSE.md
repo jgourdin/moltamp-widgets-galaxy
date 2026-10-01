@@ -1,25 +1,26 @@
-# Licences
+# Licenses
 
-Ce dépôt réunit des œuvres sous plusieurs licences. La licence de chaque fichier est indiquée dans son en-tête.
+This repo bundles works under several licenses. Each file states its own license in its header.
 
-## CC BY-NC-SA 3.0 (par défaut)
+## CC BY-NC-SA 3.0 (default)
 
-Tous les widgets et visualizers dérivés d'un shader Shadertoy publié sans autre mention (licence par défaut de Shadertoy),
-ainsi que *Sunset Drive* (CC BY-NC-SA 3.0 explicite, Michal Klos) :
+Every widget and visualizer derived from a Shadertoy shader published without another notice (Shadertoy's default
+license), plus *Sunset Drive* (explicitly CC BY-NC-SA 3.0, Michal Klos):
 Creative Commons Attribution-NonCommercial-ShareAlike 3.0 Unported — https://creativecommons.org/licenses/by-nc-sa/3.0/
 
-- **Attribution** : auteur, titre et lien d'origine en en-tête de chaque fichier et dans le README.
-- **Non commercial** : pas d'usage commercial.
-- **Partage à l'identique** : toute adaptation de ces fichiers reste sous CC BY-NC-SA 3.0.
+- **Attribution**: author, title and original link in every file header and in the README.
+- **NonCommercial**: no commercial use.
+- **ShareAlike**: any adaptation of these files stays under CC BY-NC-SA 3.0.
 
-Code tiers inclus tel quel dans ces shaders : bruit « cnoise » de Stefan Gustavson (MIT, notice conservée dans
-`widgets/st-skurr` et `visualizers/st-skurr`), « Gold Noise » de dcerisano (crédit conservé).
+Third-party code included as-is in these shaders: Stefan Gustavson's "cnoise" noise (MIT, notice kept in
+`widgets/st-skurr` and `visualizers/st-skurr`), dcerisano's "Gold Noise" (credit kept).
 
 ## MIT
 
-- `widgets/st-ocean` — shader « Very fast procedural ocean », Copyright (c) 2017-2024 afl_ext.
-- `widgets/st-mondrian-hexagon` — shader « Mondrian Hexagon Infinity », Copyright (c) 2026 David Braun.
-- Le code du runner (lecture WebGL, passes, réactivité) et `widgets/shadertoy-runner`, Copyright (c) 2026 j0j0. La démo de ce widget est sous CC0.
+- `widgets/st-ocean` — "Very fast procedural ocean", Copyright (c) 2017-2024 afl_ext.
+- `widgets/st-mondrian-hexagon` — "Mondrian Hexagon Infinity", Copyright (c) 2026 David Braun.
+- The runner code (WebGL host, passes, Claude reactivity) and `widgets/shadertoy-runner`, Copyright (c) 2026 j0j0.
+  The demo shader in that widget is CC0.
 
 ```
 Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
@@ -36,9 +37,8 @@ COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER I
 OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-Dans un widget sous CC BY-NC-SA, le code du runner y est embarqué : le fichier complet suit alors CC BY-NC-SA 3.0.
+When the runner code is embedded in a CC BY-NC-SA widget, the whole file follows CC BY-NC-SA 3.0.
 
-## Personnages
+## Characters
 
-*Exusiai Jump* et *PRTS Dance* reproduisent des personnages d'Arknights, propriété de Hypergryph (fan art, partage
-non commercial).
+*Exusiai Jump* and *PRTS Dance* depict Arknights characters, owned by Hypergryph (non-commercial fan art).

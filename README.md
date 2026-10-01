@@ -1,66 +1,154 @@
-# MOLTamp Shaders
+<div align="center">
 
-Des shaders Shadertoy transformés en **widgets** et **visualizers** pour [MOLTamp](https://moltamp.com).
-Partagés entre collègues, pour un usage **non commercial** (voir [Licences](#licences)).
+<img src="docs/hero.webp" alt="Six MOLTamp shaders in action" width="100%">
 
-## Installation
+# ✨ MOLTamp Shaders
+
+**Shadertoy shaders that live in your terminal and dance to Claude's rhythm.**
+
+20 widgets · 8 visualizers · zero network · GLSL everywhere
+
+![MOLTamp](https://img.shields.io/badge/MOLTamp-3.2.2-ff71ce?style=flat-square)
+![WebGL2](https://img.shields.io/badge/WebGL-2.0-01cdfe?style=flat-square)
+![License](https://img.shields.io/badge/license-CC%20BY--NC--SA%203.0-b967ff?style=flat-square)
+
+[Install](#-install-in-30-seconds) · [Reacts to Claude](#-reacts-to-claude) · [Gallery](#%EF%B8%8F-gallery) · [Visualizers](#-visualizers) · [Tinker](#-tinker) · [Credits](#-credits)
+
+</div>
+
+---
+
+## 🚀 Install in 30 seconds
 
 ```bash
-git clone <url-de-ce-repo> moltamp-shaders && cd moltamp-shaders
-./install.sh          # copie widgets/ et visualizers/ dans ~/Moltamp
+git clone <this-repo-url> moltamp-shaders
+cd moltamp-shaders && ./install.sh
 ```
 
-Puis redémarre MOLTamp :
-- **Widgets** : Settings > Tabs, catégorie **Shaders**. Ils prennent tout l'emplacement (`sizing: fill`).
-- **Visualizers** : engrenage du widget Visualizer > choisir le preset.
+Then **restart MOLTamp** and help yourself:
 
-Testé sur MOLTamp 3.2.2, Mac Apple Silicon. Les widgets et les visualizers « GPU » demandent WebGL2.
+| To add… | Go to… |
+|---|---|
+| 🖼️ a widget | **Settings › Tabs**, category **Shaders**, then drag it into a tab |
+| 🎵 a visualizer | the ⚙️ gear of the **Visualizer** widget, then pick the preset |
 
-## Ce que ça fait
+> [!TIP]
+> Widgets fill their whole slot. They look amazing in the **Vibes bar** at the top of the window.
 
-- **Widgets** : le GLSL d'origine tourne dans le widget (multipasse Buffer A-D et Common gérés). La vitesse et l'intensité suivent l'état de Claude (idle, thinking, streaming, tool-use…) et l'activité du terminal.
-  - Un widget n'a pas accès au son : les shaders audio y reçoivent un spectre **simulé** à partir de l'activité de Claude.
-  - Réglages par widget via `moltamp.settings` : `{ scale, maxPixels, fpsCap, speed, reactive }`.
-- **Visualizers « GPU »** (Spectralizer, Fractal Kaleidoscope, Psyche Skull, Sound Candy, Fractal Land) : le GLSL d'origine reçoit le vrai son du système. Les couleurs sont remappées sur la palette du skin (`USE_SKIN_PALETTE` en tête de `renderer.js`).
-- **Visualizers Canvas 2D** (Synthwave Sunset, Exusiai Jump, PRTS Dance) : Canvas 2D pur, couleurs du skin, réaction aux beats.
+## 🤖 Reacts to Claude
 
-## Limites connues
+MOLTamp doesn't give widgets any audio, but they **feel Claude**: speed and intensity follow its state, and terminal throughput adds a little extra kick.
 
-- **Clic droit** : sur un widget de cette collection, le menu d'emplacement (Add Widget / Remove this slot) ne s'ouvre pas. C'est une limite de MOLTamp pour tous les widgets utilisateur ; passe par Settings.
-- **Jupiter & Io** : à placer dans un emplacement large. En portrait, le shader d'origine laisse une ligne de raccord.
-- Les photos et textures des shaders d'origine sont remplacées par des textures **générées** : aucun fichier Shadertoy n'est redistribué.
-- Les visualizers GPU utilisent WebGL : ils ne respectent pas la règle « Canvas 2D uniquement » du dépôt communautaire MOLTamp.
+| When Claude is… | the shader… |
+|---|---|
+| 😴 `idle` | slows down to 0.35×, lounge mode |
+| 🤔 `thinking` | picks up to 0.8× |
+| ✍️ `streaming` | runs at 1.25× and starts pulsing |
+| 🛠️ `tool-use` | revs up to 1.6× |
+| ✋ `permission` | drops to 0.5× with a flash |
+| 💥 `error` | nearly freezes (0.25×) |
+| ✅ `complete` | victory flash, then back to calm |
 
-## Crédits
+"Audio" shaders get a **simulated spectrum** built from that activity. **Visualizers**, on the other hand, hear your Mac's real sound.
 
-Chaque fichier garde en en-tête le titre, l'auteur, le lien d'origine, la licence et la liste des modifications.
+## 🖼️ Gallery
 
-| Nom | Widget | Visualizer | Shader d'origine | Auteur | Licence |
-|---|---|---|---|---|---|
-| Shader Runner | `shadertoy-runner` | — | démo originale | j0j0 | MIT (code) + CC0 (démo) |
-| Artifakt Cubes | `st-artifakt` | — | [artifakt](https://www.shadertoy.com/view/N3KGz3) | incre_ment | CC BY-NC-SA 3.0 |
-| Coral Reef | `st-coral-reef` | — | [Coral Reef Y28](https://www.shadertoy.com/view/7X3GRS) | Yusef28 | CC BY-NC-SA 3.0 |
-| Exusiai Jump | `st-exusiai` | `st-exusiai` | [Exusiai Jumping](https://www.shadertoy.com/view/7XK3zc) | KaltsitComeBack | CC BY-NC-SA 3.0 |
-| Fibonacci Zoom | `st-fibonacci-zoom` | — | [Extruded Fibonacci Zoom](https://www.shadertoy.com/view/sfVGDG) | Shane | CC BY-NC-SA 3.0 |
-| Fractal Kaleidoscope | `st-deepseek-r1` | `st-deepseek-r1` | [DeepSeek R1 - Audio Visual](https://www.shadertoy.com/view/lXVfW3) | Patan77 | CC BY-NC-SA 3.0 |
-| Fractal Land | `st-fractal-land` | `st-fractal-land` | [Fractal Land](https://www.shadertoy.com/view/XsBXWt) | Kali | CC BY-NC-SA 3.0 |
-| Hex Hive Tunnel | `st-hive-lattice` | — | [Hexagonal Hive Lattice](https://www.shadertoy.com/view/73KGRd) | nobody93 | CC BY-NC-SA 3.0 |
-| Infinite Hamsa | `st-infinite-hamsa` | — | [Infinite Hamsa](https://www.shadertoy.com/view/7XK3Rc) | noztol | CC BY-NC-SA 3.0 |
-| Jupiter & Io | `st-jupiter-io` | — | [Jupiter and Io](https://www.shadertoy.com/view/XXjSRc) | edziewanowski | CC BY-NC-SA 3.0 |
-| Liquid Warp | `st-warp-fbm` | — | [Base warp fBM](https://www.shadertoy.com/view/tdG3Rd) | trinketMage | CC BY-NC-SA 3.0 |
-| Mondrian Hexagons | `st-mondrian-hexagon` | — | [Mondrian Hexagon Infinity](https://www.shadertoy.com/view/sXGGzV) | DavidBraun | MIT |
-| Neon Racer | `st-wipeout` | — | [Vibe coded Shadertoy Wipeout](https://www.shadertoy.com/view/f3y3Rm) | Himred | CC BY-NC-SA 3.0 |
-| Open Ocean | `st-ocean` | — | [Very fast procedural ocean](https://www.shadertoy.com/view/MdXyzX) | afl_ext | MIT |
-| PRTS Dance | `st-prts-dance` | `st-prts-dance` | [普瑞赛斯的神秘前文明舞步](https://www.shadertoy.com/view/N3VGzm) | KaltsitComeBack | CC BY-NC-SA 3.0 |
-| Psyche Skull | `st-skurr` | `st-skurr` | [.-=its a skurr=-.](https://www.shadertoy.com/view/Ws2Bzw) | im_paul_hi | CC BY-NC-SA 3.0 |
-| Sound Candy | `st-sound-candy` | `st-sound-candy` | [Sound Candy Six](https://www.shadertoy.com/view/dlGXRD) | Pink | CC BY-NC-SA 3.0 |
-| Spectralizer | `st-spectralizer` | `st-spectralizer` | [🎵🔥<<< SPECTRALIZER >>>🔥🎵](https://www.shadertoy.com/view/wXscWN) | chronos | CC BY-NC-SA 3.0 |
-| Sunset Drive | `st-sunset-drive` | — | [Sunset Drive Visualizer](https://www.shadertoy.com/view/dsXyRj) | Michal Klos, TheWindowStreamz (fork) | CC BY-NC-SA 3.0 |
-| Synthwave Sunset | `st-synthwave` | `st-synthwave` (recréation Canvas 2D) | [Synthwave audio removed](https://www.shadertoy.com/view/clsfRr) | axiomgraph | CC BY-NC-SA 3.0 |
+<table>
+<tr><td align="center" valign="top" width="33%"><img src="docs/widgets/st-hive-lattice.jpg" width="260" alt="Hex Hive Tunnel"><br><b>Hex Hive Tunnel</b><br><sub>A hexagonal crystal tunnel twisting forever.<br>by <i>nobody93</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/widgets/st-sunset-drive.jpg" width="260" alt="Sunset Drive"><br><b>Sunset Drive</b><br><sub>A synthwave endless runner, steered by the beat.<br>by <i>Michal Klos & TheWindowStreamz</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/widgets/st-infinite-hamsa.jpg" width="260" alt="Infinite Hamsa"><br><b>Infinite Hamsa</b><br><sub>An endless spiral of hamsa hands staring back.<br>by <i>noztol</i></sub></td></tr>
+<tr><td align="center" valign="top" width="33%"><img src="docs/widgets/st-fractal-land.jpg" width="260" alt="Fractal Land"><br><b>Fractal Land</b><br><sub>Cartoon flight over an infinite fractal landscape.<br>by <i>Kali</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/widgets/st-coral-reef.jpg" width="260" alt="Coral Reef"><br><b>Coral Reef</b><br><sub>A glowing tunnel of fractal coral.<br>by <i>Yusef28</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/widgets/st-synthwave.jpg" width="260" alt="Synthwave Sunset"><br><b>Synthwave Sunset</b><br><sub>Synthwave terrain under a striped retro sun.<br>by <i>axiomgraph</i></sub></td></tr>
+<tr><td align="center" valign="top" width="33%"><img src="docs/widgets/st-ocean.jpg" width="260" alt="Open Ocean"><br><b>Open Ocean</b><br><sub>Procedural ocean under a low sun; drag to look around.<br>by <i>afl_ext</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/widgets/st-fibonacci-zoom.jpg" width="260" alt="Fibonacci Zoom"><br><b>Fibonacci Zoom</b><br><sub>Endless zoom over metal tiles on a golden spiral.<br>by <i>Shane</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/widgets/st-mondrian-hexagon.jpg" width="260" alt="Mondrian Hexagons"><br><b>Mondrian Hexagons</b><br><sub>Mondrian hexagons that split and merge forever.<br>by <i>DavidBraun</i></sub></td></tr>
+<tr><td align="center" valign="top" width="33%"><img src="docs/widgets/st-jupiter-io.jpg" width="260" alt="Jupiter & Io"><br><b>Jupiter & Io</b><br><sub>Jupiter's boiling bands with Io drifting by. Best in a wide slot.<br>by <i>edziewanowski</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/widgets/st-wipeout.jpg" width="260" alt="Neon Racer"><br><b>Neon Racer</b><br><sub>Anti-gravity racing through a neon city; hold click to steer.<br>by <i>Himred</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/widgets/st-spectralizer.jpg" width="260" alt="Spectralizer"><br><b>Spectralizer</b><br><sub>Volumetric smoke sculpted by a spectrum.<br>by <i>chronos</i></sub></td></tr>
+<tr><td align="center" valign="top" width="33%"><img src="docs/widgets/st-deepseek-r1.jpg" width="260" alt="Fractal Kaleidoscope"><br><b>Fractal Kaleidoscope</b><br><sub>A psychedelic fractal kaleidoscope.<br>by <i>Patan77</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/widgets/st-skurr.jpg" width="260" alt="Psyche Skull"><br><b>Psyche Skull</b><br><sub>A psychedelic skull wobbling to the rhythm.<br>by <i>im_paul_hi</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/widgets/st-sound-candy.jpg" width="260" alt="Sound Candy"><br><b>Sound Candy</b><br><sub>Neon hexagon rings looping to the rhythm.<br>by <i>Pink</i></sub></td></tr>
+<tr><td align="center" valign="top" width="33%"><img src="docs/widgets/st-warp-fbm.jpg" width="260" alt="Liquid Warp"><br><b>Liquid Warp</b><br><sub>Domain-warped fBM flowing like ink.<br>by <i>trinketMage</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/widgets/st-artifakt.jpg" width="260" alt="Artifakt Cubes"><br><b>Artifakt Cubes</b><br><sub>Wireframe voxel cubes carved with glowing glyphs.<br>by <i>incre_ment</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/widgets/st-exusiai.jpg" width="260" alt="Exusiai Jump"><br><b>Exusiai Jump</b><br><sub>Exusiai's spin-and-jump sticker, in your skin colours.<br>by <i>KaltsitComeBack</i></sub></td></tr>
+<tr><td align="center" valign="top" width="33%"><img src="docs/widgets/st-prts-dance.jpg" width="260" alt="PRTS Dance"><br><b>PRTS Dance</b><br><sub>PRTS dancing, in your skin colours.<br>by <i>KaltsitComeBack</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/widgets/shadertoy-runner.jpg" width="260" alt="Shader Runner"><br><b>Shader Runner</b><br><sub>The engine behind all of them: drop your own shader in.<br>by <i>j0j0</i></sub></td></tr>
+</table>
 
-Non portés : *Clouds* et *Elevated* d'Inigo Quilez, dont la licence interdit tout usage dans un projet.
+## 🎵 Visualizers
 
-## Licences
+Pick them from the ⚙️ gear of the Visualizer widget. They react to system audio: Spotify, YouTube, anything coming out of your speakers.
 
-Voir [LICENSE.md](LICENSE.md) : CC BY-NC-SA 3.0 pour les ports de shaders sous licence par défaut, MIT pour Open Ocean,
-Mondrian Hexagons et le code du runner. Les danses sont du fan art de personnages Arknights (propriété de Hypergryph).
+<table>
+<tr><td align="center" valign="top" width="33%"><img src="docs/visualizers/st-spectralizer.jpg" width="260" alt="Spectralizer"><br><b>Spectralizer</b> <sub>· GPU</sub><br><sub>The smoke, sculpted by your music's real spectrum.<br>by <i>chronos</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/visualizers/st-deepseek-r1.jpg" width="260" alt="Fractal Kaleidoscope"><br><b>Fractal Kaleidoscope</b> <sub>· GPU</sub><br><sub>The kaleidoscope, driven by bass, mids and highs.<br>by <i>Patan77</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/visualizers/st-skurr.jpg" width="260" alt="Psyche Skull"><br><b>Psyche Skull</b> <sub>· GPU</sub><br><sub>The skull, warped by the highs and lows.<br>by <i>im_paul_hi</i></sub></td></tr>
+<tr><td align="center" valign="top" width="33%"><img src="docs/visualizers/st-sound-candy.jpg" width="260" alt="Sound Candy"><br><b>Sound Candy</b> <sub>· GPU</sub><br><sub>Neon rings pulsing with the volume.<br>by <i>Pink</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/visualizers/st-fractal-land.jpg" width="260" alt="Fractal Land"><br><b>Fractal Land</b> <sub>· GPU</sub><br><sub>The fractal flight, with waves riding the music.<br>by <i>Kali</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/visualizers/st-synthwave.jpg" width="260" alt="Synthwave Sunset"><br><b>Synthwave Sunset</b> <sub>· Canvas 2D</sub><br><sub>Retro sun, neon grid and spectrum-shaped mountains.<br>by <i>axiomgraph</i></sub></td></tr>
+<tr><td align="center" valign="top" width="33%"><img src="docs/visualizers/st-exusiai.jpg" width="260" alt="Exusiai Jump"><br><b>Exusiai Jump</b> <sub>· Canvas 2D</sub><br><sub>Exusiai dances faster with the bass and hops on every beat.<br>by <i>KaltsitComeBack</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/visualizers/st-prts-dance.jpg" width="260" alt="PRTS Dance"><br><b>PRTS Dance</b> <sub>· Canvas 2D</sub><br><sub>PRTS dances to the bass and pulses on every beat.<br>by <i>KaltsitComeBack</i></sub></td></tr>
+</table>
+
+- **GPU**: the original GLSL runs inside the visualizer worker, fed with the real spectrum and painted in your skin colours.
+- **Canvas 2D**: super light, 100% skin colours, and it jumps on every beat.
+
+## 🧪 Tinker
+
+**Tune a widget**: each one reads its settings from `moltamp.settings`.
+
+```json
+{ "scale": 1, "maxPixels": 600000, "fpsCap": 60, "speed": 1, "reactive": true }
+```
+
+- `fpsCap: 30` saves battery (the heaviest ones already do).
+- `speed: 2` doubles the speed; `reactive: false` stops following Claude.
+
+**Get a visualizer's original colours back**: at the top of its `renderer.js`, set `var USE_SKIN_PALETTE = false;`.
+
+**Run your own shader**: in `widgets/shadertoy-runner/index.html`, replace the `SHADER` object.
+- Common, Buffer A-D and Image passes; `buffer`, `audio` and generated-texture inputs.
+- The usual Shadertoy uniforms, plus a bonus: `iMoltamp = (energy, speed, state, pulse)`.
+
+## 🤔 FAQ
+
+<details>
+<summary><b>Right-click doesn't open the slot menu</b></summary>
+
+That's a MOLTamp limitation: right-clicks made inside a user widget never reach the host. Use **Settings** to add, remove or move a widget.
+</details>
+
+<details>
+<summary><b>A line cuts Jupiter in half</b></summary>
+
+In portrait slots the original shader tiles its flow texture. Put **Jupiter & Io** in a wide slot (the Vibes bar is perfect).
+</details>
+
+<details>
+<summary><b>My Mac is getting warm</b></summary>
+
+Lower `fpsCap` (30) or `maxPixels` (300000) in the widget settings. Hidden widgets (tab not shown) stop drawing entirely.
+</details>
+
+<details>
+<summary><b>Why isn't this on the official MOLTamp store?</b></summary>
+
+The official repos are MIT-licensed, while most of these shaders are CC BY-NC-SA 3.0. On top of that, the GPU visualizers use WebGL, and the visualizers repo only accepts pure Canvas 2D.
+</details>
+
+## 🙏 Credits
+
+All the talent belongs to the [Shadertoy](https://www.shadertoy.com) artists ❤️ Go check out the originals and leave them a like.
+
+| Name | Original shader | Author | License |
+|---|---|---|---|
+| Artifakt Cubes | [artifakt](https://www.shadertoy.com/view/N3KGz3) | incre_ment | CC BY-NC-SA 3.0 |
+| Coral Reef | [Coral Reef Y28](https://www.shadertoy.com/view/7X3GRS) | Yusef28 | CC BY-NC-SA 3.0 |
+| Exusiai Jump | [Exusiai Jumping](https://www.shadertoy.com/view/7XK3zc) | KaltsitComeBack | CC BY-NC-SA 3.0 |
+| Fibonacci Zoom | [Extruded Fibonacci Zoom](https://www.shadertoy.com/view/sfVGDG) | Shane | CC BY-NC-SA 3.0 |
+| Fractal Kaleidoscope | [DeepSeek R1 - Audio Visual](https://www.shadertoy.com/view/lXVfW3) | Patan77 | CC BY-NC-SA 3.0 |
+| Fractal Land | [Fractal Land](https://www.shadertoy.com/view/XsBXWt) | Kali | CC BY-NC-SA 3.0 |
+| Hex Hive Tunnel | [Hexagonal Hive Lattice](https://www.shadertoy.com/view/73KGRd) | nobody93 | CC BY-NC-SA 3.0 |
+| Infinite Hamsa | [Infinite Hamsa](https://www.shadertoy.com/view/7XK3Rc) | noztol | CC BY-NC-SA 3.0 |
+| Jupiter & Io | [Jupiter and Io](https://www.shadertoy.com/view/XXjSRc) | edziewanowski | CC BY-NC-SA 3.0 |
+| Liquid Warp | [Base warp fBM](https://www.shadertoy.com/view/tdG3Rd) | trinketMage | CC BY-NC-SA 3.0 |
+| Mondrian Hexagons | [Mondrian Hexagon Infinity](https://www.shadertoy.com/view/sXGGzV) | DavidBraun | MIT |
+| Neon Racer | [Vibe coded Shadertoy Wipeout](https://www.shadertoy.com/view/f3y3Rm) | Himred | CC BY-NC-SA 3.0 |
+| Open Ocean | [Very fast procedural ocean](https://www.shadertoy.com/view/MdXyzX) | afl_ext | MIT |
+| PRTS Dance | [普瑞赛斯的神秘前文明舞步](https://www.shadertoy.com/view/N3VGzm) | KaltsitComeBack | CC BY-NC-SA 3.0 |
+| Psyche Skull | [.-=its a skurr=-.](https://www.shadertoy.com/view/Ws2Bzw) | im_paul_hi | CC BY-NC-SA 3.0 |
+| Sound Candy | [Sound Candy Six](https://www.shadertoy.com/view/dlGXRD) | Pink | CC BY-NC-SA 3.0 |
+| Spectralizer | [🎵🔥<<< SPECTRALIZER >>>🔥🎵](https://www.shadertoy.com/view/wXscWN) | chronos | CC BY-NC-SA 3.0 |
+| Sunset Drive | [Sunset Drive Visualizer](https://www.shadertoy.com/view/dsXyRj) | Michal Klos & TheWindowStreamz | CC BY-NC-SA 3.0 |
+| Synthwave Sunset | [Synthwave audio removed](https://www.shadertoy.com/view/clsfRr) | axiomgraph | CC BY-NC-SA 3.0 |
+
+Original textures (photos, cubemaps) are replaced with generated ones, so no Shadertoy media is redistributed. Inigo Quilez's *Clouds* and *Elevated* are not ported: their license forbids it.
+
+## 📜 License
+
+Most ports are **CC BY-NC-SA 3.0**: credit the authors, no commercial use, share alike.
+*Open Ocean*, *Mondrian Hexagons* and the runner code are **MIT**. File-by-file details in [LICENSE.md](LICENSE.md).
+*Exusiai Jump* and *PRTS Dance* are fan art of Arknights characters (owned by Hypergryph).
