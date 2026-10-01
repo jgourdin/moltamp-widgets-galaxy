@@ -1,0 +1,17 @@
+{
+  "id": "cy-light-trails",
+  "name": "Light Trails",
+  "version": "1.0.0",
+  "description": "Neon red streaks racing across a night road like a motorbike chase; more of them when the terminal gets busy.",
+  "author": "j0j0",
+  "category": "Cyberpunk",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "telemetry.activity",
+      "telemetry.bytesPerSec"
+    ]
+  }
+}

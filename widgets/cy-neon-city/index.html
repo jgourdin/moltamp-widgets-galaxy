@@ -1,0 +1,399 @@
+<!--
+  Neon City — Cyberpunk pack for MOLTamp
+  A top-down megacity grid in neon lines; beacons flash on new Git commits and windows light up for changed files.
+  Author: j0j0 · License: MIT
+-->
+<div id="cy-root"><canvas id="cy-canvas"></canvas><div id="cy-label"></div></div>
+
+<style>
+  #cy-root { position: absolute; inset: 0; overflow: hidden; background: var(--c-chrome-bg); container-type: size; }
+  #cy-canvas { display: block; width: 100%; height: 100%; }
+  #cy-label {
+    position: absolute; left: 8px; bottom: 6px; pointer-events: none; letter-spacing: 0.08em;
+    color: var(--c-chrome-dim); text-shadow: 0 0 6px var(--c-chrome-bg);
+    font: calc(clamp(8px, 3.4cqw, 12px) * var(--user-text-scale, 1)) 'SF Mono', Menlo, 'Hiragino Sans', monospace;
+  }
+</style>
+
+<script>
+// cyber-kit — shared runtime of the Cyberpunk widget pack (MIT, j0j0).
+// Skin colours resolved for canvas use, DPR-aware canvas, pause when hidden, Claude state, telemetry.
+var CK = (function () {
+  'use strict';
+
+  var hasSdk = typeof window.moltamp !== 'undefined';
+
+  // ------------------------------------------------------------------ skin colours
+  var VARS = {
+    bg: '--c-chrome-bg', text: '--c-chrome-text', accent: '--c-chrome-accent', dim: '--c-chrome-dim',
+    border: '--c-chrome-border', fg: '--t-foreground', termBg: '--t-background', red: '--t-red',
+    green: '--t-green', yellow: '--t-yellow', blue: '--t-blue', cyan: '--t-cyan', magenta: '--t-magenta'
+  };
+  // A colour missing from the skin borrows another skin colour, never a hardcoded value.
+  var BORROW = {
+    text: ['fg', 'accent'], fg: ['text', 'accent'], accent: ['text', 'fg'], dim: ['text', 'fg'], border: ['dim', 'text'],
+    bg: ['termBg'], termBg: ['bg'], red: ['magenta', 'accent'], green: ['cyan', 'accent'], yellow: ['accent', 'red'],
+    blue: ['cyan', 'accent'], cyan: ['blue', 'accent'], magenta: ['red', 'accent']
+  };
+  var probeEl = document.createElement('span');
+  probeEl.style.display = 'none';
+  (document.body || document.documentElement).appendChild(probeEl);
+  var pc = document.createElement('canvas');
+  pc.width = pc.height = 1;
+  var pctx = pc.getContext('2d', { willReadFrequently: true });
+  var rgb = {};
+  var c = {};
+
+  // Resolves any CSS colour the skin may use (hex, rgb, var(), color-mix()) to RGB bytes.
+  function readVar(name) {
+    var raw = getComputedStyle(document.documentElement).getPropertyValue(VARS[name]).trim();
+    if (!raw) return null;
+    probeEl.style.color = '';
+    probeEl.style.color = raw;
+    var computed = getComputedStyle(probeEl).color;
+    pctx.fillStyle = '#010203';
+    pctx.fillStyle = computed;
+    if (pctx.fillStyle === '#010203' && computed !== 'rgb(1, 2, 3)') return null;
+    pctx.clearRect(0, 0, 1, 1);
+    pctx.fillRect(0, 0, 1, 1);
+    var d = pctx.getImageData(0, 0, 1, 1).data;
+    return [d[0], d[1], d[2]];
+  }
+
+  function refreshColors() {
+    var name, raw = {};
+    for (name in VARS) raw[name] = readVar(name);
+    for (name in VARS) {
+      var v = raw[name], chain = BORROW[name] || [];
+      for (var i = 0; !v && i < chain.length; i++) v = raw[chain[i]];
+      if (!v) {
+        // Last resort: the host's own text colour, still a skin value.
+        probeEl.style.color = '';
+        var m = /(\d+)\D+(\d+)\D+(\d+)/.exec(getComputedStyle(document.body || document.documentElement).color) || [0, 128, 128, 128];
+        v = [+m[1], +m[2], +m[3]];
+      }
+      rgb[name] = v;
+      c[name] = 'rgb(' + v[0] + ',' + v[1] + ',' + v[2] + ')';
+    }
+  }
+  refreshColors();
+
+  function rgba(name, a) {
+    var v = rgb[name] || rgb.text;
+    return 'rgba(' + v[0] + ',' + v[1] + ',' + v[2] + ',' + a + ')';
+  }
+
+  function mix(a, b, t, alpha) {
+    var x = rgb[a] || rgb.text, y = rgb[b] || rgb.text;
+    var r = Math.round(x[0] + (y[0] - x[0]) * t), g = Math.round(x[1] + (y[1] - x[1]) * t), bl = Math.round(x[2] + (y[2] - x[2]) * t);
+    return alpha === undefined ? 'rgb(' + r + ',' + g + ',' + bl + ')' : 'rgba(' + r + ',' + g + ',' + bl + ',' + alpha + ')';
+  }
+
+  function lum(name) {
+    var v = rgb[name] || rgb.text;
+    return (0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]) / 255;
+  }
+
+  // ------------------------------------------------------------------ sdk wrappers
+  // moltamp.poll only: it cleans itself up when the widget unloads (store rule: no raw setInterval).
+  function poll(ms, fn) {
+    if (hasSdk && moltamp.poll) return moltamp.poll(ms, fn);
+    return function () {};
+  }
+
+  function subscribe(store, selector, cb) {
+    if (!hasSdk || !moltamp.subscribe) return function () {};
+    try { return moltamp.subscribe(store, selector, cb) || function () {}; } catch (e) { return function () {}; }
+  }
+
+  function call(channel) {
+    if (!hasSdk || !moltamp.call) return Promise.reject(new Error('no sdk'));
+    try { return Promise.resolve(moltamp.call.apply(moltamp, arguments)); } catch (e) { return Promise.reject(e); }
+  }
+
+  // ------------------------------------------------------------------ text scale (Settings > Display)
+  var textScale = 1;
+  if (hasSdk && moltamp.settings) {
+    moltamp.settings.read().then(function (cfg) {
+      cfg = cfg || {};
+      if (typeof cfg.widgetTextScale === 'number') textScale = cfg.widgetTextScale;
+      document.documentElement.style.setProperty('--user-text-scale', String(textScale));
+    }).catch(function () { /* first run: no settings */ });
+  }
+
+  function font(size, weight) {
+    return (weight || 'normal') + ' ' + Math.max(7, size * textScale).toFixed(1) +
+      'px "SF Mono", Menlo, "Hiragino Sans", "Hiragino Kaku Gothic ProN", monospace';
+  }
+
+  // ------------------------------------------------------------------ Claude shell state
+  var STATES = ['idle', 'thinking', 'streaming', 'tool-use', 'permission', 'error', 'complete'];
+  var state = { name: 'idle', since: performance.now(), seen: false };
+  var stateListeners = [];
+  window.addEventListener('message', function (e) {
+    var d = e.data;
+    if (!d || d.type !== 'moltamp:push' || d.subscriptionId !== 'shell-state' || STATES.indexOf(d.data) < 0) return;
+    var prev = state.name;
+    state.name = d.data;
+    state.since = performance.now();
+    state.seen = true;
+    for (var i = 0; i < stateListeners.length; i++) {
+      try { stateListeners[i](state.name, prev); } catch (err) { /* keep other listeners alive */ }
+    }
+  });
+
+  function currentState() {
+    // "complete" is a moment, not a mode: fall back to idle after a few seconds.
+    if (state.name === 'complete' && performance.now() - state.since > 4000) return 'idle';
+    return state.name;
+  }
+
+  // ------------------------------------------------------------------ terminal telemetry
+  var tel = { bytes: 0, activity: 'idle', level: 0, started: false };
+  function telemetry() {
+    if (!tel.started) {
+      tel.started = true;
+      subscribe('telemetry', 'bytesPerSec', function (v) { tel.bytes = Number(v) || 0; });
+      subscribe('telemetry', 'activity', function (v) { tel.activity = v || 'idle'; });
+    }
+    return tel;
+  }
+
+  // 0..1 terminal energy, log-scaled bytes plus the activity level, smoothed by the caller's dt.
+  function telemetryLevel(dt) {
+    var target = Math.min(1, Math.log(1 + tel.bytes) / Math.log(1 + 200000)) * 0.75 +
+      (tel.activity === 'high' ? 0.35 : tel.activity === 'low' ? 0.15 : 0);
+    tel.level += (Math.min(1, target) - tel.level) * (1 - Math.exp(-(dt || 0.016) / 0.5));
+    return tel.level;
+  }
+
+  // ------------------------------------------------------------------ canvas + loop
+  var visible = true;
+  function watch(el) {
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver(function (entries) { visible = entries[entries.length - 1].isIntersecting; }).observe(el);
+    }
+    document.addEventListener('visibilitychange', function () { visible = !document.hidden; });
+  }
+
+  function surface(el) {
+    var s = { el: el, ctx: el.getContext('2d'), w: 0, h: 0, dpr: 1, resized: true };
+    s.fit = function () {
+      var dpr = Math.min(2, window.devicePixelRatio || 1);
+      var w = Math.max(1, el.clientWidth), h = Math.max(1, el.clientHeight);
+      if (w !== s.w || h !== s.h || dpr !== s.dpr) {
+        s.w = w; s.h = h; s.dpr = dpr;
+        el.width = Math.round(w * dpr);
+        el.height = Math.round(h * dpr);
+        s.resized = true;
+      }
+      s.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return s;
+    };
+    watch(el);
+    return s;
+  }
+
+  function loop(fn, fpsCap) {
+    var last = 0, lastDraw = 0, logged = false, cap = fpsCap || 60;
+    function frame(now) {
+      requestAnimationFrame(frame);
+      if (!visible) { last = 0; return; }
+      if (now - lastDraw < 1000 / cap - 2) return;
+      var dt = last ? Math.min((now - last) / 1000, 0.1) : 1 / 60;
+      last = lastDraw = now;
+      try { fn(dt, now / 1000); } catch (e) {
+        if (!logged) { logged = true; console.error('[cyber-kit]', e); }
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function resetCtx(ctx) {
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+  }
+
+  // ------------------------------------------------------------------ small utils
+  function hash(str) {
+    var h = 2166136261;
+    str = String(str);
+    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return ((h >>> 0) % 100000) / 100000;
+  }
+
+  function prng(seed) {
+    var a = (seed * 4294967296) >>> 0 || 1;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      var t = Math.imul(a ^ (a >>> 15), a | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function fmtBytes(b) {
+    if (hasSdk && moltamp.fmt && moltamp.fmt.bytes) return moltamp.fmt.bytes(b);
+    var u = ['B', 'KB', 'MB', 'GB'], i = 0;
+    while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+    return b.toFixed(i ? 1 : 0) + ' ' + u[i];
+  }
+
+  // Skin switches update CSS variables live; re-resolve once a second.
+  poll(1000, refreshColors);
+
+  return {
+    c: c, rgb: rgb, rgba: rgba, mix: mix, lum: lum, refreshColors: refreshColors,
+    poll: poll, subscribe: subscribe, call: call, font: font,
+    state: currentState, stateInfo: state, onState: function (cb) { stateListeners.push(cb); },
+    telemetry: telemetry, telemetryLevel: telemetryLevel,
+    surface: surface, loop: loop, resetCtx: resetCtx, isVisible: function () { return visible; },
+    hash: hash, prng: prng, fmtBytes: fmtBytes,
+    meta: (hasSdk && moltamp.meta) || { context: 'panel' }
+  };
+})();
+
+// Neon City: endless procedural city seen from above; git.status drives commit beacons, lit windows and the district name.
+(function () {
+  'use strict';
+  var S = CK.surface(document.getElementById('cy-canvas'));
+  var label = document.getElementById('cy-label');
+  var BLOCK = 34, STREET = 6, MAX_CARS = 60, MAX_BEACONS = 6;
+  var cam = { x: 0, y: 0 }, cars = [], beacons = [], t = 0, lastText = '';
+  var git = { branch: '', dirty: 0, known: null, has: false };
+  CK.telemetry();
+
+  // ---- git.status: field names are not documented, so read it loosely.
+  function countDirty(s) {
+    var n = 0;
+    ['files', 'changed', 'changedFiles', 'modified', 'staged', 'unstaged', 'untracked', 'changes'].forEach(function (k) {
+      var v = s[k];
+      if (Array.isArray(v)) n += v.length; else if (typeof v === 'number') n += v;
+    });
+    return n;
+  }
+  CK.subscribe('git', 'status', function (s) {
+    if (!s || typeof s !== 'object') { git.has = false; return; }
+    git.has = true;
+    git.branch = String(s.branch || s.current || s.head || s.ref || '');
+    git.dirty = countDirty(s);
+    // Commit ids are whatever 7-40 hex runs appear in the payload; a new one means a new commit.
+    var hashes = (JSON.stringify(s).match(/\b[0-9a-f]{7,40}\b/g) || []).filter(function (x) { return /[a-f]/.test(x) && /\d/.test(x); });
+    if (git.known === null) { git.known = {}; hashes.forEach(function (x) { git.known[x.slice(0, 7)] = true; }); return; }
+    hashes.forEach(function (x) {
+      var id = x.slice(0, 7);
+      if (git.known[id]) return;
+      git.known[id] = true;
+      if (beacons.length >= MAX_BEACONS) beacons.shift();
+      beacons.push({ wx: cam.x + (0.2 + Math.random() * 0.6) * S.w, wy: cam.y + (0.2 + Math.random() * 0.6) * S.h, age: 0, id: id });
+    });
+  });
+
+  // ---- deterministic city from block coordinates
+  function cell(i, j) {
+    var r = CK.prng(CK.hash(i + ',' + j));
+    var avenue = i % 5 === 0 || j % 5 === 0;
+    return { avenue: avenue, parts: 1 + ((r() * 3) | 0), h: r(), r1: r(), r2: r(), neon: r(), windows: r() };
+  }
+
+  function spawnCar(w, h) {
+    var horiz = Math.random() < 0.5, lanes = horiz ? h : w;
+    var line = Math.floor((Math.random() * lanes + (horiz ? cam.y : cam.x)) / BLOCK) * BLOCK - STREET / 2;
+    cars.push({ horiz: horiz, line: line, pos: (horiz ? cam.x : cam.y) + (Math.random() < 0.5 ? -20 : (horiz ? w : h) + 20),
+      dir: Math.random() < 0.5 ? 1 : -1, v: 30 + Math.random() * 70, life: 0 });
+  }
+
+  CK.loop(function (dt) {
+    S.fit();
+    S.resized = false;
+    var ctx = S.ctx, w = S.w, h = S.h, st = CK.state();
+    var level = CK.telemetryLevel(dt);
+    t += dt;
+    cam.x += dt * (6 + level * 22);
+    cam.y += dt * (3 + level * 11);
+
+    ctx.fillStyle = CK.c.bg;
+    ctx.fillRect(0, 0, w, h);
+    var light = CK.lum('bg') > 0.5;
+    var i0 = Math.floor(cam.x / BLOCK) - 1, j0 = Math.floor(cam.y / BLOCK) - 1;
+    var i1 = i0 + Math.ceil(w / BLOCK) + 2, j1 = j0 + Math.ceil(h / BLOCK) + 2;
+    var lit = Math.min(1, git.dirty / 20);
+    var neonCols = ['accent', 'cyan', 'magenta'];
+
+    for (var i = i0; i < i1; i++) {
+      for (var j = j0; j < j1; j++) {
+        var c = cell(i, j), x = i * BLOCK - cam.x, y = j * BLOCK - cam.y, size = BLOCK - STREET;
+        if (c.avenue && c.r1 < 0.25) continue; // plazas
+        // Split the block into 1-3 buildings.
+        for (var p = 0; p < c.parts; p++) {
+          var bw = c.parts === 1 ? size : size / c.parts, bx = x + p * bw + 1, by = y + 1, bh = size - 2;
+          var height = (c.h + p * 0.31) % 1;
+          ctx.fillStyle = CK.mix('bg', 'dim', light ? 0.08 + height * 0.12 : 0.05 + height * 0.12);
+          ctx.fillRect(bx, by, bw - 2, bh);
+          var neon = neonCols[(((c.neon * 3) | 0) + p) % 3];
+          var hum = 0.25 + 0.2 * Math.sin(t * 2 + c.r2 * 20);
+          // Only about a quarter of the blocks carry neon; the rest keep a faint outline on their first building.
+          if (c.neon >= 0.74 || p === 0) {
+            ctx.strokeStyle = CK.rgba(neon, (c.neon >= 0.74 ? 0.7 : 0.1) * (0.7 + hum));
+            ctx.lineWidth = 1;
+            ctx.strokeRect(bx + 0.5, by + 0.5, bw - 3, bh - 1);
+          }
+          // Windows light up with uncommitted changes.
+          if (c.windows < lit) {
+            ctx.fillStyle = CK.rgba('yellow', 0.55);
+            for (var q = 0; q < 3; q++) ctx.fillRect(bx + 3 + q * 4, by + 3 + ((c.r2 * 10 + q) % 3) * 4, 2, 2);
+          }
+        }
+      }
+    }
+    // Avenue glow lines
+    ctx.strokeStyle = CK.rgba(st === 'error' ? 'red' : 'accent', 0.16);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (i = i0; i < i1; i++) if (i % 5 === 0) { var ax = i * BLOCK - cam.x - STREET / 2; ctx.moveTo(ax, 0); ctx.lineTo(ax, h); }
+    for (j = j0; j < j1; j++) if (j % 5 === 0) { var ay = j * BLOCK - cam.y - STREET / 2; ctx.moveTo(0, ay); ctx.lineTo(w, ay); }
+    ctx.stroke();
+
+    // Traffic
+    var target = Math.min(MAX_CARS, Math.round(8 + level * 45));
+    if (cars.length < target && Math.random() < dt * 8) spawnCar(w, h);
+    ctx.globalCompositeOperation = light ? 'source-over' : 'lighter';
+    for (var k = cars.length - 1; k >= 0; k--) {
+      var car = cars[k];
+      car.pos += car.dir * car.v * dt;
+      car.life += dt;
+      var cxp = car.horiz ? car.pos - cam.x : car.line - cam.x, cyp = car.horiz ? car.line - cam.y : car.pos - cam.y;
+      if (car.life > 30 || cxp < -40 || cxp > w + 40 || cyp < -40 || cyp > h + 40) { cars.splice(k, 1); continue; }
+      ctx.fillStyle = CK.rgba(car.dir > 0 ? 'cyan' : 'red', 0.9);
+      ctx.fillRect(cxp - 1, cyp - 1, 2.2, 2.2);
+      ctx.fillStyle = CK.rgba(car.dir > 0 ? 'cyan' : 'red', 0.25);
+      if (car.horiz) ctx.fillRect(cxp - car.dir * 8, cyp - 0.5, car.dir * 8, 1);
+      else ctx.fillRect(cxp - 0.5, cyp - car.dir * 8, 1, car.dir * 8);
+    }
+
+    // Commit beacons
+    for (k = beacons.length - 1; k >= 0; k--) {
+      var b = beacons[k];
+      b.age += dt;
+      if (b.age > 6) { beacons.splice(k, 1); continue; }
+      var bx2 = b.wx - cam.x, by2 = b.wy - cam.y, fade = 1 - b.age / 6, ring = (b.age % 1.2) / 1.2;
+      ctx.strokeStyle = CK.rgba('green', fade * (1 - ring));
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(bx2, by2, 4 + ring * 26, 0, 6.283); ctx.stroke();
+      ctx.fillStyle = CK.rgba('green', fade);
+      ctx.fillRect(bx2 - 2, by2 - 2, 4, 4);
+      ctx.fillRect(bx2 - 0.5, by2 - 18 * fade, 1, 18 * fade);
+      ctx.font = CK.font(9, 'bold');
+      ctx.textAlign = 'left';
+      ctx.fillText(b.id, bx2 + 7, by2 - 6);
+    }
+    CK.resetCtx(ctx);
+
+    var text = git.has ? '地区 ' + (git.branch || '--') + (git.dirty ? '  ·  Δ ' + git.dirty : '') : '地図なし · NO REPO';
+    if (text !== lastText) { lastText = text; label.textContent = text; }
+  });
+})();
+</script>

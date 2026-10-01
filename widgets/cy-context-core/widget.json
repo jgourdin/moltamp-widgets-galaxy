@@ -1,0 +1,16 @@
+{
+  "id": "cy-context-core",
+  "name": "Context Core",
+  "version": "1.0.0",
+  "description": "Claude's context usage as a reactor core: green, then orange, then red and an alarm as it nears the limit.",
+  "author": "j0j0",
+  "category": "Cyberpunk",
+  "sizing": "fill",
+  "agent": "claude",
+  "api": {
+    "ipc": [
+      "stats.read"
+    ],
+    "shellState": true
+  }
+}

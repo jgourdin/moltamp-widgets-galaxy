@@ -1,0 +1,372 @@
+<!--
+  Cyber Vitals — Cyberpunk pack for MOLTamp
+  CPU and memory as vital signs: segmented gauges, Japanese labels, a heartbeat that follows the load, scanlines.
+  Author: j0j0 · License: MIT
+-->
+<div id="cy-root" class="vt">
+  <div class="vt-head"><span class="vt-title">生体監視</span><span class="vt-sub">VITALS</span><span class="vt-right" id="vt-up">稼働 --</span></div>
+  <div class="vt-row"><span class="vt-lbl">演算<em>CPU</em></span><div class="vt-bar" id="vt-cpu"></div><span class="vt-val" id="vt-cpu-v">--</span></div>
+  <div class="vt-row"><span class="vt-lbl">記憶<em>MEM</em></span><div class="vt-bar" id="vt-mem"></div><span class="vt-val" id="vt-mem-v">--</span></div>
+  <div class="vt-ecg"><canvas id="cy-canvas"></canvas></div>
+  <div class="vt-foot"><span id="vt-load">負荷 LOAD --</span><span id="vt-bpm">脈拍 -- BPM</span></div>
+  <div class="vt-scan"></div>
+</div>
+
+<style>
+  .vt {
+    position: absolute; inset: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; overflow: hidden;
+    background: var(--c-chrome-bg); color: var(--c-chrome-text); container-type: inline-size;
+    font: calc(clamp(9px, 4.2cqw, 13px) * var(--user-text-scale, 1)) / 1.3 'SF Mono', Menlo, 'Hiragino Sans', monospace;
+  }
+  .vt-head { display: flex; align-items: baseline; gap: 6px; letter-spacing: 0.08em; }
+  .vt-title { color: var(--c-chrome-accent); font-weight: bold; }
+  .vt-sub, .vt-lbl em, .vt-foot { color: var(--c-chrome-dim); }
+  .vt-right { margin-left: auto; color: var(--c-chrome-dim); }
+  .vt-row { display: flex; align-items: center; gap: 8px; }
+  .vt-lbl { width: 5.6em; flex: none; }
+  .vt-lbl em { font-style: normal; margin-left: 0.4em; font-size: 0.85em; }
+  .vt-bar { flex: 1; display: flex; gap: 2px; height: 0.95em; }
+  .vt-bar i { flex: 1; background: var(--c-chrome-border); border-radius: 1px; transition: background 0.4s; }
+  .vt-bar i.on { background: var(--t-green); }
+  .vt-bar i.warn { background: var(--t-yellow); }
+  .vt-bar i.crit { background: var(--t-red); }
+  .vt-val { width: 3.6em; text-align: right; flex: none; color: var(--c-chrome-accent); }
+  .vt-ecg { flex: 1; min-height: 36px; border-top: 1px solid var(--c-chrome-border); border-bottom: 1px solid var(--c-chrome-border); }
+  .vt-ecg canvas { display: block; width: 100%; height: 100%; }
+  .vt-foot { display: flex; justify-content: space-between; letter-spacing: 0.05em; }
+  .vt-scan {
+    position: absolute; inset: 0; pointer-events: none; opacity: 0.35;
+    background: repeating-linear-gradient(to bottom, transparent 0 2px, var(--c-chrome-bg) 2px 3px);
+  }
+</style>
+
+<script>
+// cyber-kit — shared runtime of the Cyberpunk widget pack (MIT, j0j0).
+// Skin colours resolved for canvas use, DPR-aware canvas, pause when hidden, Claude state, telemetry.
+var CK = (function () {
+  'use strict';
+
+  var hasSdk = typeof window.moltamp !== 'undefined';
+
+  // ------------------------------------------------------------------ skin colours
+  var VARS = {
+    bg: '--c-chrome-bg', text: '--c-chrome-text', accent: '--c-chrome-accent', dim: '--c-chrome-dim',
+    border: '--c-chrome-border', fg: '--t-foreground', termBg: '--t-background', red: '--t-red',
+    green: '--t-green', yellow: '--t-yellow', blue: '--t-blue', cyan: '--t-cyan', magenta: '--t-magenta'
+  };
+  // A colour missing from the skin borrows another skin colour, never a hardcoded value.
+  var BORROW = {
+    text: ['fg', 'accent'], fg: ['text', 'accent'], accent: ['text', 'fg'], dim: ['text', 'fg'], border: ['dim', 'text'],
+    bg: ['termBg'], termBg: ['bg'], red: ['magenta', 'accent'], green: ['cyan', 'accent'], yellow: ['accent', 'red'],
+    blue: ['cyan', 'accent'], cyan: ['blue', 'accent'], magenta: ['red', 'accent']
+  };
+  var probeEl = document.createElement('span');
+  probeEl.style.display = 'none';
+  (document.body || document.documentElement).appendChild(probeEl);
+  var pc = document.createElement('canvas');
+  pc.width = pc.height = 1;
+  var pctx = pc.getContext('2d', { willReadFrequently: true });
+  var rgb = {};
+  var c = {};
+
+  // Resolves any CSS colour the skin may use (hex, rgb, var(), color-mix()) to RGB bytes.
+  function readVar(name) {
+    var raw = getComputedStyle(document.documentElement).getPropertyValue(VARS[name]).trim();
+    if (!raw) return null;
+    probeEl.style.color = '';
+    probeEl.style.color = raw;
+    var computed = getComputedStyle(probeEl).color;
+    pctx.fillStyle = '#010203';
+    pctx.fillStyle = computed;
+    if (pctx.fillStyle === '#010203' && computed !== 'rgb(1, 2, 3)') return null;
+    pctx.clearRect(0, 0, 1, 1);
+    pctx.fillRect(0, 0, 1, 1);
+    var d = pctx.getImageData(0, 0, 1, 1).data;
+    return [d[0], d[1], d[2]];
+  }
+
+  function refreshColors() {
+    var name, raw = {};
+    for (name in VARS) raw[name] = readVar(name);
+    for (name in VARS) {
+      var v = raw[name], chain = BORROW[name] || [];
+      for (var i = 0; !v && i < chain.length; i++) v = raw[chain[i]];
+      if (!v) {
+        // Last resort: the host's own text colour, still a skin value.
+        probeEl.style.color = '';
+        var m = /(\d+)\D+(\d+)\D+(\d+)/.exec(getComputedStyle(document.body || document.documentElement).color) || [0, 128, 128, 128];
+        v = [+m[1], +m[2], +m[3]];
+      }
+      rgb[name] = v;
+      c[name] = 'rgb(' + v[0] + ',' + v[1] + ',' + v[2] + ')';
+    }
+  }
+  refreshColors();
+
+  function rgba(name, a) {
+    var v = rgb[name] || rgb.text;
+    return 'rgba(' + v[0] + ',' + v[1] + ',' + v[2] + ',' + a + ')';
+  }
+
+  function mix(a, b, t, alpha) {
+    var x = rgb[a] || rgb.text, y = rgb[b] || rgb.text;
+    var r = Math.round(x[0] + (y[0] - x[0]) * t), g = Math.round(x[1] + (y[1] - x[1]) * t), bl = Math.round(x[2] + (y[2] - x[2]) * t);
+    return alpha === undefined ? 'rgb(' + r + ',' + g + ',' + bl + ')' : 'rgba(' + r + ',' + g + ',' + bl + ',' + alpha + ')';
+  }
+
+  function lum(name) {
+    var v = rgb[name] || rgb.text;
+    return (0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]) / 255;
+  }
+
+  // ------------------------------------------------------------------ sdk wrappers
+  // moltamp.poll only: it cleans itself up when the widget unloads (store rule: no raw setInterval).
+  function poll(ms, fn) {
+    if (hasSdk && moltamp.poll) return moltamp.poll(ms, fn);
+    return function () {};
+  }
+
+  function subscribe(store, selector, cb) {
+    if (!hasSdk || !moltamp.subscribe) return function () {};
+    try { return moltamp.subscribe(store, selector, cb) || function () {}; } catch (e) { return function () {}; }
+  }
+
+  function call(channel) {
+    if (!hasSdk || !moltamp.call) return Promise.reject(new Error('no sdk'));
+    try { return Promise.resolve(moltamp.call.apply(moltamp, arguments)); } catch (e) { return Promise.reject(e); }
+  }
+
+  // ------------------------------------------------------------------ text scale (Settings > Display)
+  var textScale = 1;
+  if (hasSdk && moltamp.settings) {
+    moltamp.settings.read().then(function (cfg) {
+      cfg = cfg || {};
+      if (typeof cfg.widgetTextScale === 'number') textScale = cfg.widgetTextScale;
+      document.documentElement.style.setProperty('--user-text-scale', String(textScale));
+    }).catch(function () { /* first run: no settings */ });
+  }
+
+  function font(size, weight) {
+    return (weight || 'normal') + ' ' + Math.max(7, size * textScale).toFixed(1) +
+      'px "SF Mono", Menlo, "Hiragino Sans", "Hiragino Kaku Gothic ProN", monospace';
+  }
+
+  // ------------------------------------------------------------------ Claude shell state
+  var STATES = ['idle', 'thinking', 'streaming', 'tool-use', 'permission', 'error', 'complete'];
+  var state = { name: 'idle', since: performance.now(), seen: false };
+  var stateListeners = [];
+  window.addEventListener('message', function (e) {
+    var d = e.data;
+    if (!d || d.type !== 'moltamp:push' || d.subscriptionId !== 'shell-state' || STATES.indexOf(d.data) < 0) return;
+    var prev = state.name;
+    state.name = d.data;
+    state.since = performance.now();
+    state.seen = true;
+    for (var i = 0; i < stateListeners.length; i++) {
+      try { stateListeners[i](state.name, prev); } catch (err) { /* keep other listeners alive */ }
+    }
+  });
+
+  function currentState() {
+    // "complete" is a moment, not a mode: fall back to idle after a few seconds.
+    if (state.name === 'complete' && performance.now() - state.since > 4000) return 'idle';
+    return state.name;
+  }
+
+  // ------------------------------------------------------------------ terminal telemetry
+  var tel = { bytes: 0, activity: 'idle', level: 0, started: false };
+  function telemetry() {
+    if (!tel.started) {
+      tel.started = true;
+      subscribe('telemetry', 'bytesPerSec', function (v) { tel.bytes = Number(v) || 0; });
+      subscribe('telemetry', 'activity', function (v) { tel.activity = v || 'idle'; });
+    }
+    return tel;
+  }
+
+  // 0..1 terminal energy, log-scaled bytes plus the activity level, smoothed by the caller's dt.
+  function telemetryLevel(dt) {
+    var target = Math.min(1, Math.log(1 + tel.bytes) / Math.log(1 + 200000)) * 0.75 +
+      (tel.activity === 'high' ? 0.35 : tel.activity === 'low' ? 0.15 : 0);
+    tel.level += (Math.min(1, target) - tel.level) * (1 - Math.exp(-(dt || 0.016) / 0.5));
+    return tel.level;
+  }
+
+  // ------------------------------------------------------------------ canvas + loop
+  var visible = true;
+  function watch(el) {
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver(function (entries) { visible = entries[entries.length - 1].isIntersecting; }).observe(el);
+    }
+    document.addEventListener('visibilitychange', function () { visible = !document.hidden; });
+  }
+
+  function surface(el) {
+    var s = { el: el, ctx: el.getContext('2d'), w: 0, h: 0, dpr: 1, resized: true };
+    s.fit = function () {
+      var dpr = Math.min(2, window.devicePixelRatio || 1);
+      var w = Math.max(1, el.clientWidth), h = Math.max(1, el.clientHeight);
+      if (w !== s.w || h !== s.h || dpr !== s.dpr) {
+        s.w = w; s.h = h; s.dpr = dpr;
+        el.width = Math.round(w * dpr);
+        el.height = Math.round(h * dpr);
+        s.resized = true;
+      }
+      s.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return s;
+    };
+    watch(el);
+    return s;
+  }
+
+  function loop(fn, fpsCap) {
+    var last = 0, lastDraw = 0, logged = false, cap = fpsCap || 60;
+    function frame(now) {
+      requestAnimationFrame(frame);
+      if (!visible) { last = 0; return; }
+      if (now - lastDraw < 1000 / cap - 2) return;
+      var dt = last ? Math.min((now - last) / 1000, 0.1) : 1 / 60;
+      last = lastDraw = now;
+      try { fn(dt, now / 1000); } catch (e) {
+        if (!logged) { logged = true; console.error('[cyber-kit]', e); }
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function resetCtx(ctx) {
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+  }
+
+  // ------------------------------------------------------------------ small utils
+  function hash(str) {
+    var h = 2166136261;
+    str = String(str);
+    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return ((h >>> 0) % 100000) / 100000;
+  }
+
+  function prng(seed) {
+    var a = (seed * 4294967296) >>> 0 || 1;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      var t = Math.imul(a ^ (a >>> 15), a | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function fmtBytes(b) {
+    if (hasSdk && moltamp.fmt && moltamp.fmt.bytes) return moltamp.fmt.bytes(b);
+    var u = ['B', 'KB', 'MB', 'GB'], i = 0;
+    while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+    return b.toFixed(i ? 1 : 0) + ' ' + u[i];
+  }
+
+  // Skin switches update CSS variables live; re-resolve once a second.
+  poll(1000, refreshColors);
+
+  return {
+    c: c, rgb: rgb, rgba: rgba, mix: mix, lum: lum, refreshColors: refreshColors,
+    poll: poll, subscribe: subscribe, call: call, font: font,
+    state: currentState, stateInfo: state, onState: function (cb) { stateListeners.push(cb); },
+    telemetry: telemetry, telemetryLevel: telemetryLevel,
+    surface: surface, loop: loop, resetCtx: resetCtx, isVisible: function () { return visible; },
+    hash: hash, prng: prng, fmtBytes: fmtBytes,
+    meta: (hasSdk && moltamp.meta) || { context: 'panel' }
+  };
+})();
+
+// Cyber Vitals: system.getStats as vital signs; the heartbeat rate follows CPU load.
+(function () {
+  'use strict';
+  var SEGMENTS = 16;
+  var S = CK.surface(document.getElementById('cy-canvas'));
+  var el = function (id) { return document.getElementById(id); };
+  var bars = { cpu: el('vt-cpu'), mem: el('vt-mem') };
+  var vitals = { cpu: null, mem: null, load: null, uptime: null };
+  var cursor = 0, phase = 0, prevY = null, bpm = 60, lastBpm = '';
+
+  Object.keys(bars).forEach(function (k) {
+    for (var i = 0; i < SEGMENTS; i++) bars[k].appendChild(document.createElement('i'));
+  });
+
+  function paintBar(bar, pct) {
+    var on = pct === null ? 0 : Math.round(Math.max(0, Math.min(100, pct)) / 100 * SEGMENTS);
+    for (var i = 0; i < SEGMENTS; i++) {
+      var r = (i + 1) / SEGMENTS;
+      bar.children[i].className = i < on ? (r > 0.85 ? 'crit' : r > 0.6 ? 'warn' : 'on') : '';
+    }
+  }
+
+  function read() {
+    CK.call('system.getStats').then(function (s) {
+      s = s || {};
+      var cpu = s.cpu || {}, mem = s.memory || {};
+      vitals.cpu = typeof cpu.usagePct === 'number' ? cpu.usagePct : null;
+      vitals.mem = typeof mem.usagePct === 'number' ? mem.usagePct : null;
+      vitals.load = typeof cpu.loadAvg1m === 'number' ? cpu.loadAvg1m : null;
+      vitals.uptime = typeof s.uptime === 'number' ? s.uptime : null;
+      paintBar(bars.cpu, vitals.cpu);
+      paintBar(bars.mem, vitals.mem);
+      el('vt-cpu-v').textContent = vitals.cpu === null ? '--' : Math.round(vitals.cpu) + '%';
+      el('vt-mem-v').textContent = vitals.mem === null ? '--' : Math.round(vitals.mem) + '%';
+      el('vt-load').textContent = '負荷 LOAD ' + (vitals.load === null ? '--' : vitals.load.toFixed(2));
+      var up = vitals.uptime === null ? '--' :
+        (window.moltamp && moltamp.fmt && moltamp.fmt.duration ? moltamp.fmt.duration(vitals.uptime) : Math.round(vitals.uptime / 3600) + 'h');
+      el('vt-up').textContent = '稼働 ' + up;
+    }).catch(function () {
+      paintBar(bars.cpu, null);
+      paintBar(bars.mem, null);
+      el('vt-cpu-v').textContent = el('vt-mem-v').textContent = '--';
+    });
+  }
+  read();
+  CK.poll(2000, read);
+
+  // PQRST-like beat shape over one cycle (0..1).
+  function beat(p) {
+    function g(c, w, a) { var d = (p - c) / w; return a * Math.exp(-d * d); }
+    return g(0.18, 0.035, 0.12) - g(0.29, 0.012, 0.12) + g(0.31, 0.012, 1) - g(0.335, 0.015, 0.28) + g(0.55, 0.06, 0.22);
+  }
+
+  CK.loop(function (dt) {
+    S.fit();
+    var ctx = S.ctx, w = S.w, h = S.h;
+    if (S.resized) { ctx.fillStyle = CK.c.bg; ctx.fillRect(0, 0, w, h); cursor = 0; prevY = null; S.resized = false; }
+    var cpu = vitals.cpu === null ? 10 : vitals.cpu;
+    bpm += ((55 + cpu * 0.95) - bpm) * (1 - Math.exp(-dt / 1.5));
+    var speed = Math.max(40, w / 3); // px per second, about three seconds per sweep
+    var steps = Math.max(1, Math.round(speed * dt / 1.5));
+    var tone = cpu > 85 ? 'red' : cpu > 60 ? 'yellow' : 'green';
+    for (var s = 0; s < steps; s++) {
+      var dx = speed * dt / steps;
+      phase = (phase + dx / speed * bpm / 60) % 1;
+      var y = h * 0.62 - beat(phase) * h * 0.5;
+      // Erase a band ahead of the cursor, like a hospital monitor.
+      ctx.fillStyle = CK.c.bg;
+      ctx.fillRect(cursor, 0, 14, h);
+      if (prevY !== null) {
+        ctx.strokeStyle = CK.c[tone];
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(cursor - dx, prevY);
+        ctx.lineTo(cursor, y);
+        ctx.stroke();
+      }
+      prevY = y;
+      cursor += dx;
+      if (cursor > w) { cursor = 0; prevY = null; }
+    }
+    ctx.fillStyle = CK.c[tone];
+    ctx.fillRect(cursor - 1.5, prevY === null ? h / 2 : prevY - 1.5, 3, 3);
+    CK.resetCtx(ctx);
+    var b = '脈拍 ' + Math.round(bpm) + ' BPM';
+    if (b !== lastBpm) { lastBpm = b; el('vt-bpm').textContent = b; }
+  }, 60);
+})();
+</script>

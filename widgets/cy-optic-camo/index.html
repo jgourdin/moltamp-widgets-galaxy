@@ -1,0 +1,378 @@
+<!--
+  Optic Camo — Cyberpunk pack for MOLTamp
+  A near-invisible thermoptic shimmer that breaks into a brief glitch when a command or tool fails. Click to test.
+  Author: j0j0 · License: MIT
+-->
+<div id="cy-root"><canvas id="cy-canvas"></canvas><div id="cy-label"></div></div>
+
+<style>
+  #cy-root { position: absolute; inset: 0; overflow: hidden; background: var(--c-chrome-bg); container-type: size; }
+  #cy-canvas { display: block; width: 100%; height: 100%; }
+  #cy-label {
+    position: absolute; left: 8px; bottom: 6px; pointer-events: none; letter-spacing: 0.08em;
+    color: var(--c-chrome-dim); text-shadow: 0 0 6px var(--c-chrome-bg);
+    font: calc(clamp(8px, 3.4cqw, 12px) * var(--user-text-scale, 1)) 'SF Mono', Menlo, 'Hiragino Sans', monospace;
+  }
+</style>
+
+<script>
+// cyber-kit — shared runtime of the Cyberpunk widget pack (MIT, j0j0).
+// Skin colours resolved for canvas use, DPR-aware canvas, pause when hidden, Claude state, telemetry.
+var CK = (function () {
+  'use strict';
+
+  var hasSdk = typeof window.moltamp !== 'undefined';
+
+  // ------------------------------------------------------------------ skin colours
+  var VARS = {
+    bg: '--c-chrome-bg', text: '--c-chrome-text', accent: '--c-chrome-accent', dim: '--c-chrome-dim',
+    border: '--c-chrome-border', fg: '--t-foreground', termBg: '--t-background', red: '--t-red',
+    green: '--t-green', yellow: '--t-yellow', blue: '--t-blue', cyan: '--t-cyan', magenta: '--t-magenta'
+  };
+  // A colour missing from the skin borrows another skin colour, never a hardcoded value.
+  var BORROW = {
+    text: ['fg', 'accent'], fg: ['text', 'accent'], accent: ['text', 'fg'], dim: ['text', 'fg'], border: ['dim', 'text'],
+    bg: ['termBg'], termBg: ['bg'], red: ['magenta', 'accent'], green: ['cyan', 'accent'], yellow: ['accent', 'red'],
+    blue: ['cyan', 'accent'], cyan: ['blue', 'accent'], magenta: ['red', 'accent']
+  };
+  var probeEl = document.createElement('span');
+  probeEl.style.display = 'none';
+  (document.body || document.documentElement).appendChild(probeEl);
+  var pc = document.createElement('canvas');
+  pc.width = pc.height = 1;
+  var pctx = pc.getContext('2d', { willReadFrequently: true });
+  var rgb = {};
+  var c = {};
+
+  // Resolves any CSS colour the skin may use (hex, rgb, var(), color-mix()) to RGB bytes.
+  function readVar(name) {
+    var raw = getComputedStyle(document.documentElement).getPropertyValue(VARS[name]).trim();
+    if (!raw) return null;
+    probeEl.style.color = '';
+    probeEl.style.color = raw;
+    var computed = getComputedStyle(probeEl).color;
+    pctx.fillStyle = '#010203';
+    pctx.fillStyle = computed;
+    if (pctx.fillStyle === '#010203' && computed !== 'rgb(1, 2, 3)') return null;
+    pctx.clearRect(0, 0, 1, 1);
+    pctx.fillRect(0, 0, 1, 1);
+    var d = pctx.getImageData(0, 0, 1, 1).data;
+    return [d[0], d[1], d[2]];
+  }
+
+  function refreshColors() {
+    var name, raw = {};
+    for (name in VARS) raw[name] = readVar(name);
+    for (name in VARS) {
+      var v = raw[name], chain = BORROW[name] || [];
+      for (var i = 0; !v && i < chain.length; i++) v = raw[chain[i]];
+      if (!v) {
+        // Last resort: the host's own text colour, still a skin value.
+        probeEl.style.color = '';
+        var m = /(\d+)\D+(\d+)\D+(\d+)/.exec(getComputedStyle(document.body || document.documentElement).color) || [0, 128, 128, 128];
+        v = [+m[1], +m[2], +m[3]];
+      }
+      rgb[name] = v;
+      c[name] = 'rgb(' + v[0] + ',' + v[1] + ',' + v[2] + ')';
+    }
+  }
+  refreshColors();
+
+  function rgba(name, a) {
+    var v = rgb[name] || rgb.text;
+    return 'rgba(' + v[0] + ',' + v[1] + ',' + v[2] + ',' + a + ')';
+  }
+
+  function mix(a, b, t, alpha) {
+    var x = rgb[a] || rgb.text, y = rgb[b] || rgb.text;
+    var r = Math.round(x[0] + (y[0] - x[0]) * t), g = Math.round(x[1] + (y[1] - x[1]) * t), bl = Math.round(x[2] + (y[2] - x[2]) * t);
+    return alpha === undefined ? 'rgb(' + r + ',' + g + ',' + bl + ')' : 'rgba(' + r + ',' + g + ',' + bl + ',' + alpha + ')';
+  }
+
+  function lum(name) {
+    var v = rgb[name] || rgb.text;
+    return (0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]) / 255;
+  }
+
+  // ------------------------------------------------------------------ sdk wrappers
+  // moltamp.poll only: it cleans itself up when the widget unloads (store rule: no raw setInterval).
+  function poll(ms, fn) {
+    if (hasSdk && moltamp.poll) return moltamp.poll(ms, fn);
+    return function () {};
+  }
+
+  function subscribe(store, selector, cb) {
+    if (!hasSdk || !moltamp.subscribe) return function () {};
+    try { return moltamp.subscribe(store, selector, cb) || function () {}; } catch (e) { return function () {}; }
+  }
+
+  function call(channel) {
+    if (!hasSdk || !moltamp.call) return Promise.reject(new Error('no sdk'));
+    try { return Promise.resolve(moltamp.call.apply(moltamp, arguments)); } catch (e) { return Promise.reject(e); }
+  }
+
+  // ------------------------------------------------------------------ text scale (Settings > Display)
+  var textScale = 1;
+  if (hasSdk && moltamp.settings) {
+    moltamp.settings.read().then(function (cfg) {
+      cfg = cfg || {};
+      if (typeof cfg.widgetTextScale === 'number') textScale = cfg.widgetTextScale;
+      document.documentElement.style.setProperty('--user-text-scale', String(textScale));
+    }).catch(function () { /* first run: no settings */ });
+  }
+
+  function font(size, weight) {
+    return (weight || 'normal') + ' ' + Math.max(7, size * textScale).toFixed(1) +
+      'px "SF Mono", Menlo, "Hiragino Sans", "Hiragino Kaku Gothic ProN", monospace';
+  }
+
+  // ------------------------------------------------------------------ Claude shell state
+  var STATES = ['idle', 'thinking', 'streaming', 'tool-use', 'permission', 'error', 'complete'];
+  var state = { name: 'idle', since: performance.now(), seen: false };
+  var stateListeners = [];
+  window.addEventListener('message', function (e) {
+    var d = e.data;
+    if (!d || d.type !== 'moltamp:push' || d.subscriptionId !== 'shell-state' || STATES.indexOf(d.data) < 0) return;
+    var prev = state.name;
+    state.name = d.data;
+    state.since = performance.now();
+    state.seen = true;
+    for (var i = 0; i < stateListeners.length; i++) {
+      try { stateListeners[i](state.name, prev); } catch (err) { /* keep other listeners alive */ }
+    }
+  });
+
+  function currentState() {
+    // "complete" is a moment, not a mode: fall back to idle after a few seconds.
+    if (state.name === 'complete' && performance.now() - state.since > 4000) return 'idle';
+    return state.name;
+  }
+
+  // ------------------------------------------------------------------ terminal telemetry
+  var tel = { bytes: 0, activity: 'idle', level: 0, started: false };
+  function telemetry() {
+    if (!tel.started) {
+      tel.started = true;
+      subscribe('telemetry', 'bytesPerSec', function (v) { tel.bytes = Number(v) || 0; });
+      subscribe('telemetry', 'activity', function (v) { tel.activity = v || 'idle'; });
+    }
+    return tel;
+  }
+
+  // 0..1 terminal energy, log-scaled bytes plus the activity level, smoothed by the caller's dt.
+  function telemetryLevel(dt) {
+    var target = Math.min(1, Math.log(1 + tel.bytes) / Math.log(1 + 200000)) * 0.75 +
+      (tel.activity === 'high' ? 0.35 : tel.activity === 'low' ? 0.15 : 0);
+    tel.level += (Math.min(1, target) - tel.level) * (1 - Math.exp(-(dt || 0.016) / 0.5));
+    return tel.level;
+  }
+
+  // ------------------------------------------------------------------ canvas + loop
+  var visible = true;
+  function watch(el) {
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver(function (entries) { visible = entries[entries.length - 1].isIntersecting; }).observe(el);
+    }
+    document.addEventListener('visibilitychange', function () { visible = !document.hidden; });
+  }
+
+  function surface(el) {
+    var s = { el: el, ctx: el.getContext('2d'), w: 0, h: 0, dpr: 1, resized: true };
+    s.fit = function () {
+      var dpr = Math.min(2, window.devicePixelRatio || 1);
+      var w = Math.max(1, el.clientWidth), h = Math.max(1, el.clientHeight);
+      if (w !== s.w || h !== s.h || dpr !== s.dpr) {
+        s.w = w; s.h = h; s.dpr = dpr;
+        el.width = Math.round(w * dpr);
+        el.height = Math.round(h * dpr);
+        s.resized = true;
+      }
+      s.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return s;
+    };
+    watch(el);
+    return s;
+  }
+
+  function loop(fn, fpsCap) {
+    var last = 0, lastDraw = 0, logged = false, cap = fpsCap || 60;
+    function frame(now) {
+      requestAnimationFrame(frame);
+      if (!visible) { last = 0; return; }
+      if (now - lastDraw < 1000 / cap - 2) return;
+      var dt = last ? Math.min((now - last) / 1000, 0.1) : 1 / 60;
+      last = lastDraw = now;
+      try { fn(dt, now / 1000); } catch (e) {
+        if (!logged) { logged = true; console.error('[cyber-kit]', e); }
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function resetCtx(ctx) {
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+  }
+
+  // ------------------------------------------------------------------ small utils
+  function hash(str) {
+    var h = 2166136261;
+    str = String(str);
+    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return ((h >>> 0) % 100000) / 100000;
+  }
+
+  function prng(seed) {
+    var a = (seed * 4294967296) >>> 0 || 1;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      var t = Math.imul(a ^ (a >>> 15), a | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function fmtBytes(b) {
+    if (hasSdk && moltamp.fmt && moltamp.fmt.bytes) return moltamp.fmt.bytes(b);
+    var u = ['B', 'KB', 'MB', 'GB'], i = 0;
+    while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+    return b.toFixed(i ? 1 : 0) + ' ' + u[i];
+  }
+
+  // Skin switches update CSS variables live; re-resolve once a second.
+  poll(1000, refreshColors);
+
+  return {
+    c: c, rgb: rgb, rgba: rgba, mix: mix, lum: lum, refreshColors: refreshColors,
+    poll: poll, subscribe: subscribe, call: call, font: font,
+    state: currentState, stateInfo: state, onState: function (cb) { stateListeners.push(cb); },
+    telemetry: telemetry, telemetryLevel: telemetryLevel,
+    surface: surface, loop: loop, resetCtx: resetCtx, isVisible: function () { return visible; },
+    hash: hash, prng: prng, fmtBytes: fmtBytes,
+    meta: (hasSdk && moltamp.meta) || { context: 'panel' }
+  };
+})();
+
+// Optic Camo: faint thermoptic shimmer; failures (Claude error state, failing hook events) trigger a glitch burst.
+(function () {
+  'use strict';
+  var S = CK.surface(document.getElementById('cy-canvas'));
+  var label = document.getElementById('cy-label');
+  var FAIL_RE = /\b(error|fail(ed|ure)?|denied|exception|exit(ed)?[^0-9]{0,12}[1-9]\d*)\b/i;
+  var off = null, offCtx = null, glitch = 0, glitchLen = 1, t = 0, lastEventsSig = null, lastText = '', reason = '';
+
+  function trigger(len, why) { glitch = glitchLen = len; reason = why || ''; }
+
+  CK.onState(function (now) { if (now === 'error') trigger(1.2, 'CLAUDE ERROR'); });
+  document.getElementById('cy-canvas').addEventListener('click', function () { trigger(1.0, 'TEST'); });
+
+  // Hook events: the shape is not documented, so new entries are matched as text.
+  CK.subscribe('event', 'events', function (v) {
+    var list = Array.isArray(v) ? v : v && typeof v === 'object' ? Object.keys(v).map(function (k) { return v[k]; }) : [];
+    var sig = list.length + ':' + JSON.stringify(list[list.length - 1] || '').slice(0, 200);
+    if (lastEventsSig !== null && sig !== lastEventsSig) {
+      var fresh = list.slice(-3);
+      for (var i = 0; i < fresh.length; i++) {
+        var txt = JSON.stringify(fresh[i] || '');
+        if (FAIL_RE.test(txt)) {
+          var tool = /"(?:tool_name|toolName|tool|name)"\s*:\s*"([^"]{1,24})"/.exec(txt);
+          trigger(0.9, tool ? tool[1].toUpperCase() + ' FAILED' : 'COMMAND FAILED');
+          break;
+        }
+      }
+    }
+    lastEventsSig = sig;
+  });
+
+  function drawCamo(ctx, w, h, strength) {
+    // Hex mesh bent by a slow sine field: reads like air refracting around a cloaked shape.
+    var s = Math.max(10, Math.min(w, h) / 9), hgt = s * Math.sqrt(3) / 2;
+    ctx.strokeStyle = CK.rgba('accent', 0.07 * strength);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (var row = -1; row * hgt < h + hgt; row++) {
+      for (var col = -1; col * s * 1.5 < w + s; col++) {
+        var x = col * s * 1.5, y = row * hgt * 2 + (col % 2 ? hgt : 0);
+        var bend = Math.sin(x * 0.02 + t * 0.9) * Math.cos(y * 0.025 - t * 0.7) * s * 0.35;
+        for (var k = 0; k <= 6; k++) {
+          var a = k * Math.PI / 3, px = x + Math.cos(a) * s * 0.5 + bend, py = y + Math.sin(a) * s * 0.5 + bend * 0.6;
+          if (k === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+        }
+      }
+    }
+    ctx.stroke();
+    // Moving caustic band
+    var bx = ((t * 0.12) % 1.4 - 0.2) * w;
+    var g = ctx.createLinearGradient(bx - w * 0.15, 0, bx + w * 0.15, h);
+    g.addColorStop(0, CK.rgba('fg', 0));
+    g.addColorStop(0.5, CK.rgba('fg', 0.05 * strength));
+    g.addColorStop(1, CK.rgba('fg', 0));
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, w, h);
+  }
+
+  CK.loop(function (dt) {
+    S.fit();
+    var ctx = S.ctx, w = S.w, h = S.h, dpr = S.dpr;
+    t += dt;
+    if (!off || S.resized) {
+      off = document.createElement('canvas');
+      offCtx = off.getContext('2d');
+      S.resized = false;
+    }
+    if (off.width !== S.el.width || off.height !== S.el.height) { off.width = S.el.width; off.height = S.el.height; }
+    offCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    ctx.fillStyle = CK.c.bg;
+    ctx.fillRect(0, 0, w, h);
+    if (glitch <= 0) {
+      drawCamo(ctx, w, h, 1);
+    } else {
+      var k = glitch / glitchLen; // 1 -> 0
+      // Compose the frame off-screen, then tear it apart in horizontal slices.
+      offCtx.fillStyle = CK.c.bg;
+      offCtx.fillRect(0, 0, w, h);
+      drawCamo(offCtx, w, h, 3);
+      offCtx.textAlign = 'center';
+      offCtx.textBaseline = 'middle';
+      offCtx.font = CK.font(Math.max(11, Math.min(w / 11, h / 4)), 'bold');
+      offCtx.globalCompositeOperation = CK.lum('bg') > 0.5 ? 'multiply' : 'lighter';
+      var jx = (Math.random() - 0.5) * 6 * k;
+      offCtx.fillStyle = CK.c.red; offCtx.fillText('光学迷彩 破損', w / 2 + jx - 2, h / 2 - 8);
+      offCtx.fillStyle = CK.c.cyan; offCtx.fillText('光学迷彩 破損', w / 2 + jx + 2, h / 2 - 8);
+      offCtx.font = CK.font(Math.max(8, Math.min(w / 22, h / 8)));
+      offCtx.fillStyle = CK.c.fg;
+      offCtx.fillText(reason || 'FAILURE', w / 2, h / 2 + Math.max(10, h * 0.12));
+      offCtx.globalCompositeOperation = 'source-over';
+
+      var slices = 6 + ((Math.random() * 8) | 0);
+      for (var i = 0; i < slices; i++) {
+        var sy = Math.random() * h, sh = 2 + Math.random() * h * 0.12, dx = (Math.random() - 0.5) * w * 0.25 * k;
+        ctx.drawImage(off, 0, sy * dpr, off.width, sh * dpr, dx, sy, w, sh);
+      }
+      ctx.globalAlpha = 0.85;
+      ctx.drawImage(off, 0, 0, off.width, off.height, (Math.random() - 0.5) * 4 * k, 0, w, h);
+      ctx.globalAlpha = 1;
+      // Noise blocks and a red wash
+      for (i = 0; i < 10 * k; i++) {
+        ctx.fillStyle = CK.rgba(Math.random() < 0.5 ? 'red' : 'accent', 0.35 * Math.random() * k);
+        ctx.fillRect(Math.random() * w, Math.random() * h, Math.random() * w * 0.3, 1 + Math.random() * 6);
+      }
+      ctx.fillStyle = CK.rgba('red', 0.12 * k);
+      ctx.fillRect(0, 0, w, h);
+      glitch -= dt;
+    }
+    CK.resetCtx(ctx);
+
+    var text = glitch > 0 ? '警告 · ' + (reason || 'FAILURE') : '光学迷彩 · ACTIVE';
+    if (text !== lastText) {
+      lastText = text;
+      label.textContent = text;
+      label.style.color = glitch > 0 ? 'var(--t-red)' : 'var(--c-chrome-dim)';
+    }
+  });
+})();
+</script>

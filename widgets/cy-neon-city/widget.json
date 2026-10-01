@@ -1,0 +1,18 @@
+{
+  "id": "cy-neon-city",
+  "name": "Neon City",
+  "version": "1.0.0",
+  "description": "A top-down megacity grid in neon lines; beacons flash on new Git commits and windows light up for changed files.",
+  "author": "j0j0",
+  "category": "Cyberpunk",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "git.status",
+      "telemetry.activity",
+      "telemetry.bytesPerSec"
+    ]
+  }
+}

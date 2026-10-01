@@ -1,0 +1,17 @@
+{
+  "id": "cy-agent-radar",
+  "name": "Agent Radar",
+  "version": "1.0.0",
+  "description": "Every Claude sub-agent becomes a blip on a sweeping circular radar; finished agents fade out as ghosts.",
+  "author": "j0j0",
+  "category": "Cyberpunk",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "agent.agents",
+      "agent.activeCount"
+    ]
+  }
+}

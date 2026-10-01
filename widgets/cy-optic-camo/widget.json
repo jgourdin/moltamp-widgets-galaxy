@@ -1,0 +1,16 @@
+{
+  "id": "cy-optic-camo",
+  "name": "Optic Camo",
+  "version": "1.0.0",
+  "description": "A near-invisible thermoptic shimmer that breaks into a brief glitch when a command or tool fails. Click to test.",
+  "author": "j0j0",
+  "category": "Cyberpunk",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "event.events"
+    ]
+  }
+}

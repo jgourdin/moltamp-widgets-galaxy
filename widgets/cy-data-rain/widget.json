@@ -1,0 +1,17 @@
+{
+  "id": "cy-data-rain",
+  "name": "Data Rain",
+  "version": "1.0.0",
+  "description": "A cascade of katakana and hex whose speed follows the terminal's throughput.",
+  "author": "j0j0",
+  "category": "Cyberpunk",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "telemetry.activity",
+      "telemetry.bytesPerSec"
+    ]
+  }
+}

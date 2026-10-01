@@ -1,0 +1,16 @@
+{
+  "id": "cy-vitals",
+  "name": "Cyber Vitals",
+  "version": "1.0.0",
+  "description": "CPU and memory as vital signs: segmented gauges, Japanese labels, a heartbeat that follows the load, scanlines.",
+  "author": "j0j0",
+  "category": "Cyberpunk",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "ipc": [
+      "system.getStats"
+    ],
+    "shellState": true
+  }
+}

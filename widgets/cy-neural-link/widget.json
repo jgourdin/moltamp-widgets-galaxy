@@ -1,0 +1,17 @@
+{
+  "id": "cy-neural-link",
+  "name": "Neural Link",
+  "version": "1.0.0",
+  "description": "A wireframe brain that lights up with Claude: calm at rest, impulses while thinking, data streams while writing, red alert on errors.",
+  "author": "j0j0",
+  "category": "Cyberpunk",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "telemetry.activity",
+      "telemetry.bytesPerSec"
+    ]
+  }
+}

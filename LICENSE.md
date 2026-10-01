@@ -17,6 +17,7 @@ Third-party code included as-is in these shaders: Stefan Gustavson's "cnoise" no
 
 ## MIT
 
+- `widgets/cy-*` — the Cyberpunk District widgets, Copyright (c) 2026 j0j0.
 - `widgets/st-ocean` — "Very fast procedural ocean", Copyright (c) 2017-2024 afl_ext.
 - `widgets/st-mondrian-hexagon` — "Mondrian Hexagon Infinity", Copyright (c) 2026 David Braun.
 - The runner code (WebGL host, passes, Claude reactivity) and `widgets/shadertoy-runner`, Copyright (c) 2026 j0j0.
