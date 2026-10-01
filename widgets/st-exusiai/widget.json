@@ -1,0 +1,13 @@
+{
+  "id": "st-exusiai",
+  "name": "Exusiai Jump",
+  "version": "1.0.0",
+  "description": "Exusiai's spin-and-jump sticker in your skin colours; tempo follows Claude. By KaltsitComeBack.",
+  "author": "KaltsitComeBack (port: j0j0)",
+  "category": "Shaders",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true
+  }
+}

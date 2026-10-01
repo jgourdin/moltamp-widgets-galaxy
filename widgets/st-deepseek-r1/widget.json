@@ -1,0 +1,17 @@
+{
+  "id": "st-deepseek-r1",
+  "name": "Fractal Kaleidoscope",
+  "version": "1.0.0",
+  "description": "Psychedelic fractal kaleidoscope that blooms as Claude thinks and streams. By Patan77.",
+  "author": "Patan77 (port: j0j0)",
+  "category": "Shaders",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "telemetry.activity",
+      "telemetry.bytesPerSec"
+    ]
+  }
+}

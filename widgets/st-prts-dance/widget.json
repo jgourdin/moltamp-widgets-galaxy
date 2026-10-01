@@ -1,0 +1,13 @@
+{
+  "id": "st-prts-dance",
+  "name": "PRTS Dance",
+  "version": "1.0.0",
+  "description": "PRTS dance in your skin colours; tempo follows Claude. By KaltsitComeBack.",
+  "author": "KaltsitComeBack (port: j0j0)",
+  "category": "Shaders",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true
+  }
+}

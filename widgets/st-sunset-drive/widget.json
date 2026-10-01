@@ -1,0 +1,17 @@
+{
+  "id": "st-sunset-drive",
+  "name": "Sunset Drive",
+  "version": "1.0.0",
+  "description": "Synthwave endless runner: a car racing a neon road, steered by the beat. By Michal Klos and TheWindowStreamz.",
+  "author": "TheWindowStreamz (port: j0j0)",
+  "category": "Shaders",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "telemetry.activity",
+      "telemetry.bytesPerSec"
+    ]
+  }
+}

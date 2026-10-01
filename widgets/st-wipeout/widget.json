@@ -1,0 +1,17 @@
+{
+  "id": "st-wipeout",
+  "name": "Neon Racer",
+  "version": "1.0.0",
+  "description": "Anti-gravity racer through a neon city; click and drag to steer. By Himred.",
+  "author": "Himred (port: j0j0)",
+  "category": "Shaders",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "telemetry.activity",
+      "telemetry.bytesPerSec"
+    ]
+  }
+}

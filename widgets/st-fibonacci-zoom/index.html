@@ -1,0 +1,671 @@
+<!--
+  Extruded Fibonacci Zoom — by Shane
+  Original: https://www.shadertoy.com/view/sfVGDG
+  License: CC BY-NC-SA 3.0 (Shadertoy default)
+  License text: https://creativecommons.org/licenses/by-nc-sa/3.0/
+  Ported to MOLTamp with shadertoy-runner. Changes from the original:
+     - Image ch0: metal photo -> procedural metal fbm
+     - Image ch1: photo cubemap -> procedural sky cubemap
+-->
+<div id="st-root"><canvas id="st-canvas"></canvas><div id="st-msg"></div></div>
+
+<style>
+  #st-root { position: absolute; inset: 0; overflow: hidden; background: var(--c-chrome-bg); }
+  #st-canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  #st-msg {
+    position: absolute; left: 6px; right: 6px; bottom: 6px; display: none; padding: 4px 6px;
+    color: var(--t-red); background: var(--c-chrome-bg); border: 1px solid var(--c-chrome-border);
+    font: 10px/1.35 'SF Mono', monospace; white-space: pre-wrap; max-height: 80%; overflow: hidden;
+  }
+</style>
+
+<script>
+  /* Extruded Fibonacci Zoom — Shane — https://www.shadertoy.com/view/sfVGDG — CC BY-NC-SA 3.0 (Shadertoy default)  — https://creativecommons.org/licenses/by-nc-sa/3.0/ */
+  var SHADER = {"id": "st-fibonacci-zoom", "title": "Extruded Fibonacci Zoom", "author": "Shane", "url": "https://www.shadertoy.com/view/sfVGDG", "license": "CC BY-NC-SA 3.0 (Shadertoy default)", "common": "\n// PI and 2PI.\n#define PI 3.14159265358979\n#define TAU 6.28318530718\n\n// The so-called golden ratio.\n#define PHI ((1. + sqrt(5.))/2.)\n\n\n// Standard 2D rotation formula.\nmat2 rot2(in float a){ float c = cos(a), s = sin(a); return mat2(c, s, -s, c); }\n\n// Hash without Sine -- Dave Hoskins\n// https://www.shadertoy.com/view/4djSRW\n// 1 out, 2 in...\nfloat hash21(vec2 p) {\n    p = fract(p*vec2(623.34, 456.21));\n    p += dot(p, p + 145.123);\n    return fract(p.x*p.y);\n}\n\n// A slight variation on one of Dave Hoskins's hash functions,\n// which you can find here:\n//\n// Hash without Sine -- Dave Hoskins\n// https://www.shadertoy.com/view/4djSRW\n// 1 out, 3 in...\nfloat hash31(vec3 p3)\n{\n\tp3  = fract(p3*vec3(.6031, .5030, .4973));\n    p3 += dot(p3, p3.zyx + 43.527);\n    return fract((p3.x + p3.y) * p3.z);\n}\n \n\n////////////////\n\n\n// Unsigned distance to the segment joining \"a\" and \"b\".\nfloat distLine(vec2 p, vec2 a, vec2 b){\n\n    p -= a; b -= a;\n    float h = clamp(dot(p, b)/dot(b, b), 0., 1.);\n    return length(p - b*h);\n}\n\n \n// IQ's 2D box formula.\nfloat sBoxS(in vec2 p, in vec2 b, in float rf){\n  \n  vec2 d = abs(p) - b + rf;\n  return min(max(d.x, d.y), 0.) + length(max(d, 0.)) - rf;\n    \n}\n\n// Commutative smooth maximum function. Provided by Tomkh, and taken \n// from Alex Evans's (aka Statix) talk: \n// http://media.lolrus.mediamolecule.com/AlexEvans_SIGGRAPH-2015.pdf\n// Credited to Dave Smith @media molecule.\nfloat smax(float a, float b, float k){\n    \n   float f = max(0., 1. - abs(b - a)/k);\n   return max(a, b) + k*.25*f*f;\n}\n\n\n\n/////////////////////////\n\n// Global scale. Not absolutely necessary to have one, but\n// it's here. The ratio doesn't have to be 1 to 1, but I\n// think it looks neater this way.\nconst vec2 gSc = vec2(1, 1);\n\n// Vertex holder. Not used here.\n//mat4x2 vP;\n\n// Iteration number and quad number.\nint gI, quad;\n\n// Global zoom.\nfloat gZoom;\n\n// Cell coordinates and a final scale value that I've  hacked \n//in at the last minute... I'll tidy up the logic later. :)\nvec2 gP, gSc2;\n\n// This is a copy of the direction ray. If you create a pattern that\n// relies on rotating coordinates, the direction ray needs to rotate\n// in unison. Traversals can be annoying to code sometimes, but the\n// benefits are worth the effort.\nvec2 svRd;\n\n\n// The Fibonacci routine. This is very similar to a regular Fibonacci rectangle\n// partitioning; The only difference is that four rectangles are joined together\n// to give the impression that you're zooming toward a central inflection point.\n//\nvec3 distField(vec2 p){    \n    \n    \n    // 2D coordinate copy.\n    vec2 svP = p;\n     \n    //Get the quadrant. Clockwise from the bottom left.\n    quad = p.x<0.? p.y<0.? 0 : 1 : p.y<0.? 3 : 2;\n \n    \n    // The following is just some space manipulation to rotate on rectangle\n    // around itself four times. Each rectangle is then subdivided to \n    // produce the pattern you see.\n    \n    // Central coordinate ID, of sorts.\n    vec2 ip = vec2(-1, -1)*gSc*.5*vec2(sqrt(5.), 1);\n    \n    // Rotating space and shifting coordinates..\n    p = rot2(PI/2.*float(quad))*p; \n    ip = rot2(-PI/2.*float(quad))*ip;\n    \n    // Rotating the direction ray to match the rotating coordinates.\n    svRd = rot2(PI/2.*float(quad))*svRd; \n     \n    // Shifing back.\n    p -= vec2(-1, -1)*gSc*.5*vec2(sqrt(5.), 1);\n     \n \n    // Global cell coordinate copy.\n    gP = p;\n    \n    ////////////\n    \n    // Subdivsion of rectangles. Because we're used repeat space tricks\n    // above, we only need subdivide one rectangle, and not all four.\n    \n    // Staring scale.\n    vec2 sc = gSc;\n    \n    // Distance variable.\n    float d = 1e5; \n \n \n    // Initializing the iteration variable to zero.\n    gI = 0;\n    \n    // Direction and translation variables.\n    vec2 dir = vec2(0, 0);    \n    vec2 ph2 = vec2(PHI/2., PHI/2. - 1.);\n    \n    // Subdivision: Perform the minimum you can get away with.\n    // This is a pretty common fractal-like subdivision. Partition,\n    // rotate, scale, then continue the process. \n    for(int i = 0; i<16; i++){\n        \n          \n      \n        // The rectangle (square) distance for this cell.\n        vec2 ap = abs(p) - sc/2.;\n        float dI = max(ap.x, ap.y);\n         \n\n        // If we're inside this rectangle, obtain the distance,\n        // then set the required variables, such as scale, local\n        // coordinates, ID, vertices, and so forth.\n        if(dI<0.){\n\n            \n            d = sBoxS(p, sc/2. - .0, sc.x*.2); // Box distance.\n            \n            gI = i; // Iteration number.\n            \n\n            gSc2 = sc; // Overall scale for this object.\n            gP = p; // Cell coordinates.\n            \n            // Vertices. Not used here.\n            //vP = mat4x2(vec2(-.5)*sc, vec2(-.5, .5)*sc, \n            //            vec2(.5)*sc, vec2(.5, -.5)*sc);\n  \n            break;\n\n        }\n        \n        // If we're not inside the cell we need, keep subdividing.\n\n\n        // Turn the direction each iteration.\n        dir = rot2(PI/2.*float(i%4))*vec2(1, 1);\n        dir *= sc*ph2;\n        // Translate and rotate the ID to match. \n        ip += rot2(-PI/2.*float(quad))*dir; \n        \n        // Quarter spiral turn each iteration.\n        ph2 = ph2.yx*vec2(-1, 1);\n        \n        // Translate.\n        p -= dir;\n\n\n        // Reduce the scale by the golder ratio factor.\n        sc /= PHI;\n            \n \n        ////////////// \n    \n    }\n    \n     \n      \n    // Return the distance value of the closed rectangular block\n    // and it's cell center, which doubles as a unique ID. By the\n    // way, you could also return the the tile center and dimensions,\n    // if you wished to render other things.\n      \n    d /= gZoom; \n    \n    return vec3(d, ip);\n}\n\n\n////////////////////////////////\n\n\n// Bidirectional Reflectance Distribution Function (BRDF). \n//\n// If you want a quick crash course in BRDF, see the following:\n// Microfacet BRDF: Theory and Implementation of Basic PBR Materials\n// https://www.youtube.com/watch?v=gya7x9H3mV0&t=730s\n//\n\n// Surface geometry function.\nfloat GGX_Schlick(float nv, float rough) {\n    //float r = rough; // original\n    float r = .5 + .5*rough; // Disney remapping.\n    float k = (r*r)/2.;\n    float denom = nv*(1. - k) + k;\n    return max(nv, .001)/denom;\n}\n\n// Specular calculation.\nvec3 getSpec(vec3 FS, float nh, float nr, float nl, float rough){\n\n    // Microfacet distribution... Most dominant term.\n    // Microfaceted normal distribution function.\n    float alpha = pow(rough, 4.);\n    float b = (nh*nh*(alpha - 1.) + 1.);\n    float D = alpha/(PI*b*b);    \n    \n    // Geometry self shadowing term.\n    // G_Smith calculations.\n    float g1_l = GGX_Schlick(nl, rough);\n    float g1_v = GGX_Schlick(nr, rough);\n    float G = g1_l*g1_v;\n    \n    // Combining the terms above.\n    return FS*D*G/(4.*max(nr, .001))*PI;\n}\n\nvec3 getDiff(vec3 FS, float nl, float type){\n\n    // Diffuse calculations.\n    vec3 diff = nl*(1. - FS); // If not specular, use as diffuse (optional)\n    return diff*(1. - type); // No diffuse for metals.\n}\n\n//////////////////////////////////////", "passes": [{"name": "Image", "output": "image", "code": "/*\n\n    Extruded Fibonacci Zoom\n    -----------------------\n    \n    I like perusing through simple looped animations. The standard single-rectangle\n    Fibonacci zoom comes up every now and again -- The most common form consists of a \n    single golden-ratio rectangle subdivided into self similar squares that traverse\n    a golden spiral pattern. \n    \n    The less common variation involves subdividing the base rectangles in such a way\n    as to create a vanishing point in one of the corners. Four of these base rectangles\n    are then rotated around one another, effectively creating a vanishing point in the \n    center. This particular example involves the latter arrangement.\n    \n    Objects exhibiting the required symmetry and self similarity can be used to create \n    infinite fractal zoom effects. From a math and coding perspective, I know how \n    infinite zooms work, but they still really mess with my sense of perception. :)\n    \n    Most of the Fibonacci zoom effects I see occur in flat 2D form. In fact, I prefer\n    them that way. However, just to be different, I've produced this one in extruded \n    traversal form.\n    \n\n    \n    Related examples:\n    \n    // I've always been a fan of this example. Elegantly written and\n    // presented... which is just another way to say that IQ wrote it. :)\n    // Anyway, if you want to understand the Fibonacci zoom effect, \n    // I'd recommend this.\n    Golden Ratio and Spiral -- iq\n    https://www.shadertoy.com/view/fslyW4\n    \n    \n    // Here's a much cleaner version of the four pronged\n    // Fibonacci square zoom. I really like examples like these. \n    fibonacci windmill -- ufffd\n    https://www.shadertoy.com/view/tcVBzK\n    \n    \n    Reference:\n    \n    Golden Spiral\n    https://en.wikipedia.org/wiki/Golden_spiral\n  \n    \n*/\n \n\n// Max ray distance.\n#define FAR 20.\n\n\n// Scene object ID.\nint objID;\n\n\n// Tri-Planar blending function: Based on an old Nvidia writeup:\n// GPU Gems 3 - Ryan Geiss: http://http.developer.nvidia.com/GPUGems3/gpugems3_ch01.html\nvec3 tex3D(sampler2D tex, in vec3 p, in vec3 n){    \n    \n    // Abosolute normal with a bit of tightning.\n    n = max(abs(n), .001); // max(n*n - .1,, 0.001), etc.\n    n /= dot(n, vec3(1)); \n    //n /= length(n); \n    \n    // Texure samples. One for each plane.\n    vec3 tx = texture(tex, p.zy).xyz;\n    vec3 ty = texture(tex, p.xz).xyz;\n    vec3 tz = texture(tex, p.xy).xyz;\n    \n    // Multiply each texture plane by its normal dominance factor.... or however you wish\n    // to describe it. For instance, if the normal faces up or down, the \"ty\" texture \n    // sample, represnting the XZ plane, will be used, which makes sense.\n    \n    // Textures are stored in sRGB (I think), so you have to convert them to linear space \n    // (squaring is a rough approximation) prior to working with them... or something like\n    // that. :) Once the final color value is gamma corrected, you should see correct \n    // looking colors.\n    return mat3(tx*tx, ty*ty, tz*tz)*n;\n} \n \n\n\n// IQ's extrusion formula.\nfloat opExtrusion(in float sdf, in float pz, in float h){\n    \n    vec2 w = vec2( sdf, abs(pz) - h );\n  \treturn min(max(w.x, w.y), 0.) + length(max(w, 0.));\n\n    /*  \n    // Slight rounding. A little nicer, but slower.\n    const float sf = .004;\n    vec2 w = vec2( sdf, abs(pz) - h - sf/2.);\n  \treturn min(max(w.x, w.y), 0.) + length(max(w + sf, 0.)) - sf;\n    */\n \n\n}\n\n// Ray origin, ray direction, point on the line, normal. \nfloat rayLine(vec2 ro, vec2 rd, vec2 p, vec2 n){\n   \n   // This it trimmed down, and can be trimmed done more, but it isn't\n   // a GPU intensive example, so it'll do.\n   float s = dot(p - ro, n)/dot(rd, n);\n   return s<0. ? 1e8 : s;\n\n}\n\n// Some hacky 2D symbols. I put this together pretty quickly. There'd\n// be nicer ways to get the job done, but this will do.\nfloat getLetter(vec2 gP, vec2 gSc2, float val0, float zoom){\n\n    float d;\n    \n    // Random number.\n    float rnd = hash21(vec2(val0) + .22);\n    \n    float sc = gSc2.x*.1;\n    \n    if(rnd<.25){\n       \n       // Box.\n       d = sBoxS(gP, vec2(sc), sc*.35);\n    \n    }\n    else if(rnd<.5){\n       // Cross.\n       d = distLine(abs(gP), vec2(-sc), vec2(sc));//\n    }\n    else if(rnd<.75){\n    \n       // Triangle.\n       vec2 q = gP;\n       mat3x2 pnt; vec2 dir = vec2(0, sc);\n       pnt[0] = dir;\n       pnt[1] = rot2(-TAU/3.)*dir;\n       pnt[2] = rot2(TAU/3.)*dir;\n       d = distLine(q, pnt[0], pnt[1]);//\n       d = min(d, distLine(q, pnt[1], pnt[2]));\n       d = min(d, distLine(q, pnt[2], pnt[0]));\n    \n    }\n    else {\n       \n       // Circle.\n       d = length(gP) - sc;  \n   \n    }\n    \n    return abs(d) - .014*zoom;\n\n\n}\n \nvec3 gRd; // Global ray direction.\nvec3 gDir; // Global step direction.\nfloat gCD; // Global cell wall distance.\n \n// There are too many globals hacked in here. I'll \n// tidy them up later.\n\n// Object distances and stored values.\nvec4 vObj, gVal;\n\n// Zoomed based ID value.\nfloat gVal0;\n\n// Object border flag.\nint gBord;\n\n\n// Glow color.\nvec3 gGlow;\n\n// The extruded image.\nfloat map(vec3 p3){\n    \n     \n    // Floor.\n    float fl = p3.y;  \n    \n     \n    // Fairly standard zoom setup.\n    //\n    // Cycle time.\n    float t = iTime/2.;\n    float iT = floor(t); // Number of cycles.  \n\n    // Fractional time component.\n    t = t - (iT + .5); \n    \n    // We want each object to expand (or contract) to the size of\n    // the next object each time that the fractional time scale \n    // loops back to zero.\n    float zoom = pow(PHI, t*4.);\n   \n    // Scale and smoothing factor.\n    float sc = 1./4./zoom;\n    \n    gZoom = sc; // Saving the scale to use elsewhere.\n \n    ///////////\n    \n    // Scaling and translation.\n    vec2 p = p3.xz*sc;\n    \n    \n    // Spiral rotation: You can do this elsewhere, but I find\n    // this easier.\n    mat2 rM = rot2(mod(iTime/4., TAU));\n    p *= rM;\n \n    // The direction ray.\n    svRd = gRd.xz;\n    svRd *= rM; // Rotating to match the local rotation.\n    \n    \n     // Scene object.\n    vec3 d3 = distField(p);\n    float d2 = d3.x; // Distance.\n    vec2 id = d3.yz; // ID.\n    // Creating some space around the objects.\n    d2 += .005;\n    \n     \n    // A random value based on the Fibonacci quadrant \n    // and zoom factor.\n    float quadF = float(quad);\n    float val = mod(iT*4. + float(gI), 16.)/16.;//\n    val += quadF/4.;\n    gVal0 = val; // Saving the object ID for later use.\n    \n    \n    \n    // Creating some ring symbols. They're a bit of cliche, but they\n    // look interesting.\n    // 2D leters.\n    float ring = getLetter(gP, gSc2, val, gZoom);\n    ring /= gZoom; // Factor in the zoom.\n    ring = max(ring, d2 + .002); // Cap the ring object to the box.\n   \n    // CSG on various panels.\n    float ew = .01;\n    \n    // Hollowing out random boxes, then adding the ring object.\n    float oD2 = d2;\n    float bord = (abs(d2 + ew*2.) - ew*1.);\n    d2 = max(d2, -bord);\n    gBord = d2<bord? 1 : 0;\n    d2 = min(d2, bord);\n    if(hash21(vec2(val, 57))<.5){\n        d2 = max(d2, -(oD2 + ew*4.));\n        \n        ring = abs(ring);// - ew/8.;\n    }\n    else { ring = 1e5; if(-oD2>ew) gBord = 0; }\n    \n    \n    // Giving the 2D objects some depth -- based on the random zoom value.\n    float h = .2*gSc2.x/gZoom  + .02;\n    float d = opExtrusion(d2, p3.y - h/2., h/2.);\n    \n    // The ring object.\n    ring = opExtrusion(ring, p3.y - h/2., .005);\n    \n    // Apply glow to the ring objects.\n    if(ring<min(d, fl) && ring<.1){\n        \n        float rnd = hash21(vec2(val, 43));\n        vec3 gCol = .5 + .45*cos(TAU*rnd/16. + vec3(0, PI/2.*1.4, PI));\n        gCol = mix(gCol, gCol.xzy, length(gP)/gZoom*4.);\n        \n        gGlow += gCol/(.0035 + ring)/800.;\n        \n    \n    }\n    \n    \n    // Using the 2D distance to distort the face distances.\n    if(gBord==0) d += d2*.25;\n    else d += max(d2, -.01)*.25;\n    \n \n    // Minimum cell wall distance. Used as a ray delimiter.\n    //\n    // Rectangle.\n    //\n    vec2 n1 = vec2(0, 1); // Top face, or line.\n    vec2 n2 = vec2(1, 0); // Righ face, or line.\n    \n    // If the cell wall is behind ray (or the ray is facing the opposing cell\n    // wall, if you prefer), use the normal from the back back cell wall.\n    n1 = dot(svRd, n1)<0.? -n1 : n1;\n    n2 = dot(svRd, n2)<0.? -n2 : n2;\n \n    vec2 ip = d3.yz;\n    float t1 = rayLine(gP, svRd, (n1*gSc2*.5), -n1);\n    float t2 = rayLine(gP, svRd, (n2*gSc2*.5), -n2);\n    gCD = min(t1, t2) + .0005;\n    gCD /= gZoom;\n  \n \n    \n    // Save values for later.\n    gVal = vec4(d2, id, h);\n    \n      \n    // Object IDs.\n    vObj = vec4(fl, d, ring, 1e5);\n    \n    // Minimum scene distance.\n    return min(min(fl, d), ring); \n \n}\n\n \n// Basic raymarcher.\nfloat trace(in vec3 ro, in vec3 rd){\n\n    // Overall ray distance and scene distance.\n    //\n    // IQ's suggestion: Moving the ray's jump-off point closer to the \n    // surface plane to gain some extra speed, especially when in \n    // fullscreen mode.\n    float t = (.5 - ro.y)/rd.y, d;\n\n    t += hash31(ro + rd)*.25; // Jitter.\n    \n    \n    gRd = rd; // Global ray direction.\n    gDir = step(0., gRd) - .5; // Step direction.\n    \n    \n    gGlow = vec3(0);\n\n    \n    for(int i = min(0, iFrame); i<128; i++){\n    \n        d = map(ro + rd*t);\n        if(abs(d)<.001 || t>FAR) break;\n        \n        // Limit the ray jump distance to ensure that it\n        // doesn't go any further than the next cell.\n        t += min(d*.7, gCD); \n    }\n\n    return min(t, FAR);\n}\n\n\n// Normal function. It's not as fast as the tetrahedral calculation, but more symmetrical.\nvec3 normal(in vec3 p) {\n\t\n    //return normalize(vec3(m(p + e.xyy) - m(p - e.xyy), m(p + e.yxy) - m(p - e.yxy),\t\n    //                      m(p + e.yyx) - m(p - e.yyx)));\n    \n    // This mess is an attempt to speed up compiler time by contriving a break... It's \n    // based on a suggestion by IQ. I think it works, but I really couldn't say for sure.\n    float sgn = 1.;\n    vec3 e = vec3(.002, 0, 0), mp = e.zzz; // Spalmer's clever zeroing.\n    for(int i = min(iFrame, 0); i<6; i++){\n\t\tmp.x += map(p + sgn*e)*sgn;\n        sgn = -sgn;\n        if((i&1)==1){ mp = mp.yzx; e = e.zxy; }\n    }\n    \n    return normalize(mp);\n}\n\n\n// Cheap shadows are hard. In fact, I'd almost say, shadowing particular scenes with \n// limited iterations is impossible... However, I'd be very grateful if someone could \n// prove me wrong. :)\nfloat softShadow(vec3 ro, vec3 rd, vec3 n, float lDist, float k){\n\n    // Initialize the shade and ray distance.\n    float shade = 1.;\n    float t = 0.; \n \n    // Coincides with the hit condition in the \"trace\" function. I've added in \n    // a touch of jittering to alleviate banding.\n    ro += n*.0015 + rd*hash31(ro + rd + n)*.005;\n    \n    // IQ's suggestion: It's analogous to moving the ray closer to the\n    // surface plane, in order to gain some extra speed.\n    lDist = (.25 - ro.y)/rd.y;\n\n\n    gRd = rd; // Global ray direction.\n    gDir = step(0., gRd) - .5; // Step direction.\n\n\n    // Max shadow iterations - More iterations make nicer shadows, but slow things down. \n    // Obviously, the lowest number to give a decent shadow is the best one to choose. \n    for (int i = min(0, iFrame); i<48; i++){\n\n        float d = map(ro + rd*t);\n        shade = min(shade, k*d/t);\n        //shade = min(shade, smoothstep(0., 1., k*d/t)); // Thanks to IQ for this tidbit.\n       \n        \n        // Early exit, if necessary.\n        if (d<0. || t>lDist) break;       \n\n        // So many options here, and none are perfect: dist += clamp(d, .01, stepDist), etc.\n        t += clamp(min(d, gCD), .005, .25); \n        \n    }\n\n    // Shadow.\n    return max(shade, 0.); \n}\n\n\n// I keep a collection of occlusion routines... OK, that sounded really nerdy. :)\n// Anyway, I like this one. I'm assuming it's based on IQ's original.\nfloat calcAO(in vec3 p, in vec3 n){\n\n\tfloat sca = 3., occ = 0.;\n    for( int i = 0; i<6; i++ ){\n    \n        float hr = .01 + float(i)*.2/6.;        \n        float d = map(p + n*hr);\n        occ += (hr - d)*sca;\n        sca *= .75;\n    }\n    \n    return clamp(1. - occ, 0., 1.);  \n}\n\n\n// The normal function is just an application of the finite (central, forward) \n// difference method. The less used curvature function is a second derivative \n// extension of the former -- In fact, you can derive the curvature function \n// from it.\n//\n// I think it's technically called a discrete finite difference approximation to \n// the continuous Laplace differential operator? Either way, it gives you the \n// curvature of a surface, which is pretty handy.\n//\n// Original pixelshader usage (I think?) - Cheap curvature: \n// https://www.shadertoy.com/view/Xts3WM\n//\n// Other usage: Xyptonjtroz: https://www.shadertoy.com/view/4ts3z2\n//\n// spr: sample spread, amp: amplitude, offs: offset.\nfloat curve(in vec3 p, in float spr, in float amp, in float offs){\n\n    \n    spr /= 450.;\n    \n    float sgn = 1.;\n    vec3 e = vec3(spr, 0, 0); \n    float d = -map(p)*6.;\n    for(int i = min(iFrame, 0); i<6; i++){\n\t\td += map(p + sgn*e);\n        sgn = -sgn;\n        if((i&1)==1){ e = e.zxy; }\n    }\n    \n    // By the way, I take a lot of liberties with this part of the formula. \n    // Dividing by the sample spread squared (e.x*e.x) is technically correct, \n    // but I'll sometimes divide by other things to get the result I want.\n    //\n    return clamp(d/e.x/e.x*amp/16. + offs, -1., 1.)*.5 + .5;\n    //return smoothstep(-1., 1., d/e.x/e.x*amp/16. + offs);\n\n}\n\n \n\nvoid mainImage( out vec4 fragColor, in vec2 fragCoord ){\n\n    \n    // Screen coordinates.\n\tvec2 uv = (fragCoord - iResolution.xy*.5)/iResolution.y;\n \n    \n\t// Camera Setup.\n    vec3 ro = vec3(0, .8, .6); // Camera position, or ray origin.\n\tvec3 lk = vec3(0, 0, 0);//vec3(0, -.25, iTime);  // \"Look At\" position.\n \n    // Light positioning.\n \tvec3 lp = ro + vec3(.5, .25, 1);// Put it a bit in front of the camera.\n\t\n\n    // Using the above to produce the unit ray-direction vector.\n    float FOV = 1.; // FOV - Field of view.\n    vec3 fwd = normalize(lk - ro); // Forward.\n    //if(dot(fwd, vec3(fwd.z, 0, -fwd.x))==0.) fwd = normalize(fwd - vec3(0, 0, .00001));\n    vec3 rgt = normalize(cross(vec3(0, 1, 0), fwd));// Right. \n    // \"right\" and \"forward\" are perpendicular normals, so the result is normalized.\n    vec3 up = cross(fwd, rgt); // Up.\n    \n    // Camera.\n    //mat3 mCam = mat3(rgt, up, fwd);\n    // rd - Ray direction.\n    //vec3 rd = mCam*normalize(vec3(uv, 1./FOV));//\n    vec3 rd = normalize(uv.x*rgt + uv.y*up + fwd/FOV);\n    \n      \n    // Raymarch to the scene.\n    float t = trace(ro, rd);\n    \n    // Save the object ID.\n    \n    // Object ID.\n    objID = 0; \n    float minDist = 1e5;\n    // Sorting more objects.\n    for(int i = 0; i<4; i++){\n       if(vObj[i]<minDist){\n           minDist = vObj[i];\n           objID = i;\n       }\n    }\n    \n    \n    // Zoom and cell coordinates.\n    float svZoom = gZoom;\n    vec2 svP = gP;\n  \n    // Object scale.\n    vec2 svSc = gSc2;\n    // Object values, like 2D face distance and ID.\n    vec4 svVal = gVal;\n    \n    // Zoom based ID.\n    float svVal0 = gVal0;\n    \n    // Quad, iteration number, and border variable.\n    int svQuad = quad;\n    int svGI = gI;\n    int svBord = gBord;\n    \n    // Glow.\n    vec3 svGlow = gGlow;\n   \n\t\n    // Initiate the scene color to black.\n\tvec3 col = vec3(0);\n\t\n\t// The ray has effectively hit the surface, so light it up.\n\tif(t < FAR){\n        \n  \t\n    \t// Surface position and surface normal.\n\t    vec3 sp = ro + rd*t;\n        vec3 sn = normal(sp);\n        \n        \n        \n        // Light direction vector.\n\t    vec3 ld = lp - sp;\n\n        // Distance from respective light to the surface point.\n\t    float lDist = max(length(ld), .001);\n    \t\n    \t// Normalize the light direction vector.\n\t    ld /= lDist;\n\n         \n        // Shadows and ambient self shadowing.\n    \tfloat sh = softShadow(sp, ld, sn, lDist, 16.);\n    \tfloat ao = calcAO(sp, sn); // Ambient occlusion.\n       \n        // Scene curvature.\n        float spr = 1.5, ampC = 1., offs = .0;\n        float crv = curve(sp, spr, ampC, offs);\n        \n        // There's a bit of fakery involved here. Normally, you'd save the glow \n        // value after performing the raymarching calculations. However, here we're\n        // doing it after curvature or shadows, which produces a faux shadowy glow \n        // effect. I don't use it often, but sometimes it works well.\n\t    svGlow = gGlow;  \n        \n        \n\t    // Light attenuation, based on the distances above.\n\t    float atten = 1./(1. + lDist*.05);\n\n            \n        // Obtaining the texel color. \n\t    vec3 texCol = vec3(1); \n        \n       \n        //float sf = 1.5/iResolution.y;\n        //float ew = .005;\n        \n        vec2 txP = svP;///svCir.z;\n         \n        \n        // Material properties.\n        float type = .8;//ns2*.1;\n        float rough = .25;//ns*.4 + .1;\n        float fresRef = .5;\n      \n        // Texture coordinates.\n        vec2 tUV = svP/svSc;//svP/svSc;\n        vec3 txN = sn;\n        // Rotating the texture to match the distance function.\n        mat2 rM = rot2(mod(PI/2.*float(svQuad), TAU));\n        rM *= rot2(mod(iTime/4., TAU));\n        txN.xz *= rM;\n        \n        // Texture value.\n        vec3 tx;\n         \n        if(objID==1 || objID==2){\n            \n\n            // Object color.\n            \n            // Texture coordinate preparations.\n            float txY = sp.y - svVal.w;\n            txY *= svZoom/svSc.x/2.;           \n            vec2 ip = svVal.yz;\n            vec3 txP = vec3(tUV.x, txY, tUV.y);\n            tx = tex3D(iChannel0, txP/2. + .0, txN);\n\n            // Texture based roughness value. \n            float gr = dot(tx, vec3(.299, .587, .114));\n            rough = gr*2.;\n            \n            // Object base color.\n            float rnd = hash21(vec2(svVal0, 43));\n            //texCol = .5 + .45*cos(TAU*rnd/10. + vec3(0, PI/2., PI));\n            texCol = vec3(.14 + rnd*.04)*vec3(1.05, 1, .95).zyx;\n            \n            \n            // Border color. \n            if(svBord == 1){\n               texCol = vec3(.55, .5, .45).zyx*.3;\n \n            }\n            \n            // Glowing character base color,\n            if(objID==2){\n                \n                texCol = vec3(1);\n            \n            }\n            \n            // Applying the texture.\n            texCol *= tx;\n              \n            // Dark edges. Not needed.\n            //float eD = abs(svVal.x*svZoom) - .0001;\n            //texCol = mix(texCol, vec3(0), 1. - smoothstep(0., .001, eD));\n   \n        }\n        else {\n            \n            // The glowing character floor.\n            float txY = (sp.y) - svVal.w;\n            txY *= svZoom/svSc.x/2.;           \n            \n            // Texturing.\n            vec3 txP = vec3(tUV.x, txY, tUV.y);\n            tx = tex3D(iChannel0, txP/2. + .5, txN);\n            \n            // Overall color.\n            texCol *= tx*.2;             \n           \n        }\n        \n        /////////////////        \n        \n        // Backscatter.\n        float bac = clamp(dot(sn, -normalize(vec3(ld.x, 0, ld.z))), 0., 1.);\n        texCol += texCol*vec3(1, .15, .1)*bac*5.;\n       \n        // Ambient light.\n        //\n\t    // Quick Lighting Tech - blackle\n        // https://www.shadertoy.com/view/ttGfz1\n        // Studio and outdoor.\n        //float amb = pow(length(sin(sn*2.)*.5 + .5)/sqrt(3.), 2.);\n        float amb = length(sin(sn*2.)*.5 + .5)/sqrt(3.)*smoothstep(-1., 1., sn.y); \n \n       \n///////////////\n\n\n        // Standard BRDF dot product calculations.\n        vec3 h = normalize(ld - rd); // Half vector.\n        float ndl = dot(sn, ld);\n        float nr = clamp(dot(sn, -rd), 0., 1.); // Leaving it here.\n        float nl = clamp(ndl, 0., 1.);\n        float nh = clamp(dot(sn, h), 0., 1.);\n        float vh = clamp(dot(-rd, h), 0., 1.); \n        // Fresnel related.\n        vec3 f0 = vec3(.16*(fresRef*fresRef)); \n        // For metals, the base color is used for F0.\n        f0 = mix(f0, texCol, type);\n        vec3 FS = f0 + (1. - f0)*pow(1. - vh, 5.); // Fresnel-Schlick reflected light term.\n\n        // BRDF style specular and diffuse calculations. There is so little\n        // extra work involved, but the lighting quality is much better.\n        vec3 spec = getSpec(FS, nh, nr, nl, rough);\n        vec3 diff = getDiff(FS, nl, type);\n        float speR = pow(nh, 5.);\n  \n\n//////////////////\n        \n        // Combining the above terms to produce the final color.\n        col = texCol*(diff*sh + spec*sh + amb*(sh*.5 + .5));\n        \n        \n        // Curvature shading, for a little extra depth.\n        col *= crv*1.5 + .25;\n        //col *= 1. - abs(crv - .5)*2.;\n        \n    \n        // Shading.\n        col *= ao*atten;\n        \n        // Cheap specular reflection. \n        vec3 rf = reflect(rd, sn); // Surface reflection.\n        vec3 rTx = texture(iChannel1, rf).xyz; rTx *= rTx;\n        float rF = objID==1 && svBord==1? 16. : 3.;//.5;\n        col += col*speR*rTx*rF; \n        \n        // It's sometimes helpful to check things like shadows and AO by themselves.\n        //col = vec3(ao);\n          \n\t\n\t}\n    \n    // Apply the glow.\n    col += svGlow;\n    \n    // Horizon fog. Not visible here, but provided for completeness.\n    col = mix(col, vec3(0), smoothstep(.2, .99, t/FAR));\n    \n    \n    // Subtle vignette.\n    uv = fragCoord/iResolution.xy;\n    col *= pow(16.*uv.x*uv.y*(1. - uv.x)*(1. - uv.y) , 1./16.);\n\n    \n    // Sigmoid tone mapping: Basically, it brings down the really bright \n    // high-frequency lighting.\n    //\n    // This particular one liner was popularized by XOR, and is a favorite\n    // amongst the code-golfing crowd for its obvious low charater count \n    // and reasonble quality.\n    col = tanh(col);\n    \n    // Rough gamma correction.\n\tfragColor = vec4(pow(max(col, 0.), vec3(1)/2.2), 1);\n\t\n}", "inputs": [{"channel": 0, "filter": "mipmap", "wrap": "repeat", "kind": "gen", "gen": "fbm", "size": 512, "seed": 51, "scale": 8, "contrast": 1.4, "colors": [[40, 34, 30], [110, 92, 78], [150, 140, 130], [95, 70, 50], [200, 190, 180]]}, {"channel": 1, "filter": "mipmap", "wrap": "clamp", "kind": "gen", "gen": "sky", "size": 128}]}], "options": {"scale": 1, "maxPixels": 400000, "fpsCap": 30, "reactive": true}};
+</script>
+
+<script>
+// shadertoy-runner — runs a Shadertoy shader (Common + Buffer A-D + Image) inside a MOLTamp widget.
+// Reads the global SHADER config injected above this script. WebGL2 first, WebGL1 best effort.
+(function () {
+  'use strict';
+
+  var cfg = window.SHADER;
+  var opts = cfg.options || {};
+  var canvas = document.getElementById('st-canvas');
+  var msg = document.getElementById('st-msg');
+  var debug = window.__shadertoyRunner = { id: cfg.id, ready: false, errors: [], fps: 0, frame: 0, context: null, compileMs: 0 };
+
+  function fail(text) {
+    debug.errors.push(text);
+    msg.textContent = text;
+    msg.style.display = 'block';
+  }
+
+  var ctxAttrs = { antialias: false, alpha: false, depth: false, stencil: false, premultipliedAlpha: false, preserveDrawingBuffer: false, powerPreference: 'high-performance' };
+  var gl = canvas.getContext('webgl2', ctxAttrs);
+  var isGL2 = !!gl;
+  if (!gl) gl = canvas.getContext('webgl', ctxAttrs);
+  if (!gl) { fail('WebGL unavailable in this widget'); return; }
+  debug.context = isGL2 ? 'webgl2' : 'webgl1';
+
+  var ext = {};
+  if (isGL2) {
+    ext.cbf = gl.getExtension('EXT_color_buffer_float');
+    ext.cbhf = gl.getExtension('EXT_color_buffer_half_float');
+    ext.fl = gl.getExtension('OES_texture_float_linear');
+  } else {
+    ext.deriv = gl.getExtension('OES_standard_derivatives');
+    ext.lod = gl.getExtension('EXT_shader_texture_lod');
+    ext.tf = gl.getExtension('OES_texture_float');
+    ext.cbf = gl.getExtension('WEBGL_color_buffer_float');
+  }
+  ext.parallel = gl.getExtension('KHR_parallel_shader_compile');
+
+  // ---------------------------------------------------------------- generated textures
+  // Seeded PRNG so generated noise is identical on every load.
+  function prng(seed) {
+    var a = seed >>> 0;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      var t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function genNoise(size, mode, seed) {
+    var rnd = prng(seed || 1), n = size * size, d = new Uint8Array(n * 4), i;
+    if (mode === 'gray') {
+      for (i = 0; i < n; i++) { var v = (rnd() * 256) | 0; d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = d[i * 4 + 3] = v; }
+      return d;
+    }
+    for (i = 0; i < n * 4; i++) d[i] = (rnd() * 256) | 0;
+    if (mode === 'rgba-iq') {
+      // iq's 3D-noise-from-2D trick reads .yx at uv + (37,17)*z: G must equal R shifted by (37,17), A likewise from B.
+      for (var y = 0; y < size; y++) for (var x = 0; x < size; x++) {
+        var j = ((((y - 17) % size) + size) % size) * size + ((((x - 37) % size) + size) % size);
+        d[(y * size + x) * 4 + 1] = d[j * 4];
+        d[(y * size + x) * 4 + 3] = d[j * 4 + 2];
+      }
+    }
+    return d;
+  }
+
+  function genVolume(size, seed) {
+    var rnd = prng(seed || 7), n = size * size * size, d = new Uint8Array(n * 4);
+    for (var i = 0; i < n; i++) { var v = (rnd() * 256) | 0; d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = d[i * 4 + 3] = v; }
+    return d;
+  }
+
+  // Tileable value-noise fbm, colourised through a list of RGB stops: stands in for photo textures.
+  function genFbm(size, spec) {
+    var rnd = prng(spec.seed || 3), g = 32, lattice = new Float32Array(g * g), i;
+    for (i = 0; i < g * g; i++) lattice[i] = rnd();
+    function vnoise(x, y, period) {
+      var xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi;
+      fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
+      var x0 = ((xi % period) + period) % period, y0 = ((yi % period) + period) % period;
+      var x1 = (x0 + 1) % period, y1 = (y0 + 1) % period;
+      var a = lattice[(y0 % g) * g + (x0 % g)], b = lattice[(y0 % g) * g + (x1 % g)];
+      var c = lattice[(y1 % g) * g + (x0 % g)], e = lattice[(y1 % g) * g + (x1 % g)];
+      return a + (b - a) * fx + (c - a) * fy + (a - b - c + e) * fx * fy;
+    }
+    var stops = spec.colors, oct = spec.octaves || 5, base = spec.scale || 4, d = new Uint8Array(size * size * 4);
+    for (var y = 0; y < size; y++) for (var x = 0; x < size; x++) {
+      var v = 0, amp = 0.5, freq = base, norm = 0;
+      for (var o = 0; o < oct; o++) {
+        v += amp * vnoise(x / size * freq, y / size * freq, freq);
+        norm += amp; amp *= 0.5; freq *= 2;
+      }
+      v = Math.min(1, Math.max(0, (v / norm - 0.5) * (spec.contrast || 1.6) + 0.5));
+      var f = v * (stops.length - 1), k = Math.min(stops.length - 2, Math.floor(f)), t = f - k;
+      var p = (y * size + x) * 4;
+      for (var ch = 0; ch < 3; ch++) d[p + ch] = (stops[k][ch] + (stops[k + 1][ch] - stops[k][ch]) * t) | 0;
+      d[p + 3] = (v * 255) | 0;
+    }
+    return d;
+  }
+
+  // Procedural sky cubemap (gradient + sun) in place of Shadertoy's photo cubemaps.
+  function genSkyFace(size, face, spec) {
+    var d = new Uint8Array(size * size * 4), sun = spec.sun || [0.4, 0.5, 0.75];
+    var sl = Math.sqrt(sun[0] * sun[0] + sun[1] * sun[1] + sun[2] * sun[2]);
+    for (var y = 0; y < size; y++) for (var x = 0; x < size; x++) {
+      var u = (x + 0.5) / size * 2 - 1, v = (y + 0.5) / size * 2 - 1, dx, dy, dz;
+      switch (face) {
+        case 0: dx = 1; dy = -v; dz = -u; break;
+        case 1: dx = -1; dy = -v; dz = u; break;
+        case 2: dx = u; dy = 1; dz = v; break;
+        case 3: dx = u; dy = -1; dz = -v; break;
+        case 4: dx = u; dy = -v; dz = 1; break;
+        default: dx = -u; dy = -v; dz = -1;
+      }
+      var l = Math.sqrt(dx * dx + dy * dy + dz * dz); dx /= l; dy /= l; dz /= l;
+      var h = Math.max(-1, Math.min(1, dy)), c = [0, 0, 0];
+      var top = spec.zenith || [40, 70, 130], hor = spec.horizon || [190, 175, 160], gnd = spec.ground || [45, 40, 38];
+      var w = h > 0 ? Math.pow(h, 0.5) : Math.pow(-h, 0.35);
+      for (var ch = 0; ch < 3; ch++) c[ch] = h > 0 ? hor[ch] + (top[ch] - hor[ch]) * w : hor[ch] + (gnd[ch] - hor[ch]) * w;
+      var s = Math.max(0, (dx * sun[0] + dy * sun[1] + dz * sun[2]) / sl), glow = Math.pow(s, 64) * 255 + Math.pow(s, 6) * 60;
+      var p = (y * size + x) * 4;
+      for (ch = 0; ch < 3; ch++) d[p + ch] = Math.min(255, c[ch] + glow);
+      d[p + 3] = 255;
+    }
+    return d;
+  }
+
+  // Font atlas like Shadertoy's "Font 1": 16x16 ASCII grid, glyph coverage in RGB and a signed
+  // distance in alpha (0.5 = edge, below = inside), so SDF text code keeps working.
+  function edt1d(f, n, d, v, z) {
+    var k = 0, q, s;
+    v[0] = 0; z[0] = -1e20; z[1] = 1e20;
+    for (q = 1; q < n; q++) {
+      s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+      while (s <= z[k]) { k--; s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]); }
+      k++; v[k] = q; z[k] = s; z[k + 1] = 1e20;
+    }
+    for (k = 0, q = 0; q < n; q++) {
+      while (z[k + 1] < q) k++;
+      d[q] = (q - v[k]) * (q - v[k]) + f[v[k]];
+    }
+  }
+
+  function edt2d(grid, size) {
+    var f = new Float64Array(size), d = new Float64Array(size), v = new Int32Array(size), z = new Float64Array(size + 1), x, y;
+    for (x = 0; x < size; x++) {
+      for (y = 0; y < size; y++) f[y] = grid[y * size + x];
+      edt1d(f, size, d, v, z);
+      for (y = 0; y < size; y++) grid[y * size + x] = d[y];
+    }
+    for (y = 0; y < size; y++) {
+      for (x = 0; x < size; x++) f[x] = grid[y * size + x];
+      edt1d(f, size, d, v, z);
+      for (x = 0; x < size; x++) grid[y * size + x] = d[x];
+    }
+  }
+
+  function genFont(size) {
+    var cell = size / 16, c = document.createElement('canvas');
+    c.width = c.height = size;
+    var g = c.getContext('2d');
+    g.fillStyle = '#000';
+    g.fillRect(0, 0, size, size);
+    g.fillStyle = '#fff';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.font = 'bold ' + Math.round(cell * 0.78) + 'px Menlo, Monaco, "SF Mono", monospace';
+    for (var code = 33; code < 127; code++) {
+      g.fillText(String.fromCharCode(code), (code % 16 + 0.5) * cell, (Math.floor(code / 16) + 0.5) * cell + cell * 0.04);
+    }
+    var img = g.getImageData(0, 0, size, size).data, n = size * size, i;
+    var outside = new Float64Array(n), inside = new Float64Array(n);
+    for (i = 0; i < n; i++) { var on = img[i * 4] > 127; outside[i] = on ? 0 : 1e20; inside[i] = on ? 1e20 : 0; }
+    edt2d(outside, size);
+    edt2d(inside, size);
+    var spread = cell / 4, out = new Uint8Array(n * 4);
+    for (i = 0; i < n; i++) {
+      var dist = Math.sqrt(outside[i]) - Math.sqrt(inside[i]);
+      var w = 0.5 + 0.5 * Math.max(-1, Math.min(1, dist / spread));
+      // Canvas rows go top-down, GL rows bottom-up: flip so glyph 0 sits in the top row like Shadertoy.
+      var y = Math.floor(i / size), j = ((size - 1 - y) * size + (i % size)) * 4;
+      out[j] = out[j + 1] = out[j + 2] = img[i * 4];
+      out[j + 3] = Math.round(w * 255);
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------- GL helpers
+  var FILTERS = {
+    nearest: [gl.NEAREST, gl.NEAREST],
+    linear: [gl.LINEAR, gl.LINEAR],
+    mipmap: [gl.LINEAR_MIPMAP_LINEAR, gl.LINEAR]
+  };
+
+  function applySampler(target, filter, wrap, hasMips) {
+    var f = FILTERS[filter] || FILTERS.linear;
+    var minF = (filter === 'mipmap' && !hasMips) ? gl.LINEAR : f[0];
+    gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, minF);
+    gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, f[1]);
+    var w = wrap === 'repeat' ? gl.REPEAT : gl.CLAMP_TO_EDGE;
+    gl.texParameteri(target, gl.TEXTURE_WRAP_S, w);
+    gl.texParameteri(target, gl.TEXTURE_WRAP_T, w);
+    if (isGL2 && target === gl.TEXTURE_3D) gl.texParameteri(target, gl.TEXTURE_WRAP_R, w);
+  }
+
+  function upload2D(w, h, data) {
+    var t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    var pot = (w & (w - 1)) === 0 && (h & (h - 1)) === 0;
+    if (isGL2 || pot) gl.generateMipmap(gl.TEXTURE_2D);
+    return { target: gl.TEXTURE_2D, tex: t, w: w, h: h, d: 1, mips: isGL2 || pot };
+  }
+
+  var genCache = {};
+  function makeGenerated(spec) {
+    var key = JSON.stringify(spec);
+    if (genCache[key]) return genCache[key];
+    var res, size = spec.size || 256;
+    if (spec.gen === 'volume') {
+      if (!isGL2) return null;
+      var t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_3D, t);
+      gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA8, size, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, genVolume(size, spec.seed));
+      gl.generateMipmap(gl.TEXTURE_3D);
+      res = { target: gl.TEXTURE_3D, tex: t, w: size, h: size, d: size, mips: true };
+    } else if (spec.gen === 'sky') {
+      var ct = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_CUBE_MAP, ct);
+      for (var f = 0; f < 6; f++) {
+        gl.texImage2D(gl.TEXTURE_CUBE_MAP_POSITIVE_X + f, 0, gl.RGBA, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, genSkyFace(size, f, spec));
+      }
+      gl.generateMipmap(gl.TEXTURE_CUBE_MAP);
+      res = { target: gl.TEXTURE_CUBE_MAP, tex: ct, w: size, h: size, d: 1, mips: true };
+    } else if (spec.gen === 'fbm') {
+      res = upload2D(size, size, genFbm(size, spec));
+    } else if (spec.gen === 'font') {
+      res = upload2D(size, size, genFont(size));
+    } else {
+      res = upload2D(size, size, genNoise(size, spec.gen, spec.seed));
+    }
+    genCache[key] = res;
+    return res;
+  }
+
+  // Images embedded as data: URIs (the widget CSP only allows data:/blob: images; they do not taint WebGL).
+  function makeImage(spec) {
+    var holder = { target: gl.TEXTURE_2D, tex: gl.createTexture(), w: 1, h: 1, d: 1, mips: false };
+    gl.bindTexture(gl.TEXTURE_2D, holder.tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
+    var img = new Image();
+    img.onload = function () {
+      gl.bindTexture(gl.TEXTURE_2D, holder.tex);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, spec.vflip !== false);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      holder.w = img.width; holder.h = img.height;
+      var pot = (img.width & (img.width - 1)) === 0 && (img.height & (img.height - 1)) === 0;
+      if (isGL2 || pot) { gl.generateMipmap(gl.TEXTURE_2D); holder.mips = true; }
+    };
+    img.src = spec.src;
+    return holder;
+  }
+
+  // Audio texture laid out like Shadertoy's: 512x2, row 0 = FFT, row 1 = waveform.
+  var AUDIO_W = 512;
+  var audioData = new Uint8Array(AUDIO_W * 2);
+  var audioTex = null;
+  function makeAudio() {
+    if (audioTex) return audioTex;
+    var t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    if (isGL2) gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, AUDIO_W, 2, 0, gl.RED, gl.UNSIGNED_BYTE, audioData);
+    else gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, AUDIO_W, 2, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, audioData);
+    audioTex = { target: gl.TEXTURE_2D, tex: t, w: AUDIO_W, h: 2, d: 1, mips: false, audio: true };
+    return audioTex;
+  }
+
+  // Render targets: float when the GPU can render to it, like Shadertoy's buffers.
+  var rtFormat = (function () {
+    if (isGL2) {
+      if (ext.cbf) return { internal: gl.RGBA32F, format: gl.RGBA, type: gl.FLOAT, linear: !!ext.fl };
+      if (ext.cbhf) return { internal: gl.RGBA16F, format: gl.RGBA, type: gl.HALF_FLOAT, linear: true };
+      return { internal: gl.RGBA8, format: gl.RGBA, type: gl.UNSIGNED_BYTE, linear: true };
+    }
+    if (ext.tf && ext.cbf) return { internal: gl.RGBA, format: gl.RGBA, type: gl.FLOAT, linear: !!gl.getExtension('OES_texture_float_linear') };
+    return { internal: gl.RGBA, format: gl.RGBA, type: gl.UNSIGNED_BYTE, linear: true };
+  })();
+
+  function makeTarget(w, h) {
+    var t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texImage2D(gl.TEXTURE_2D, 0, rtFormat.internal, w, h, 0, rtFormat.format, rtFormat.type, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    var fb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return { tex: t, fb: fb };
+  }
+
+  // ---------------------------------------------------------------- programs
+  var VS = isGL2
+    ? '#version 300 es\nlayout(location = 0) in vec2 pos;\nvoid main() { gl_Position = vec4(pos, 0.0, 1.0); }\n'
+    : 'attribute vec2 pos;\nvoid main() { gl_Position = vec4(pos, 0.0, 1.0); }\n';
+
+  function samplerType(inp) {
+    if (!inp) return 'sampler2D';
+    if (inp.kind === 'gen' && inp.gen === 'sky') return 'samplerCube';
+    if (inp.kind === 'gen' && inp.gen === 'volume') return 'sampler3D';
+    return 'sampler2D';
+  }
+
+  function header(pass) {
+    var h;
+    if (isGL2) {
+      h = '#version 300 es\nprecision highp float;\nprecision highp int;\nprecision highp sampler2D;\nprecision highp sampler3D;\nprecision highp samplerCube;\n';
+    } else {
+      h = (ext.deriv ? '#extension GL_OES_standard_derivatives : enable\n' : '') +
+        (ext.lod ? '#extension GL_EXT_shader_texture_lod : enable\n' : '') +
+        'precision highp float;\nprecision highp int;\n';
+    }
+    h += '#define HW_PERFORMANCE ' + (opts.hwPerformance === 0 ? 0 : 1) + '\n';
+    h += 'uniform vec3 iResolution;\nuniform float iTime;\nuniform float iTimeDelta;\nuniform float iFrameRate;\n' +
+      'uniform int iFrame;\nuniform float iChannelTime[4];\nuniform vec3 iChannelResolution[4];\nuniform vec4 iMouse;\n' +
+      'uniform vec4 iDate;\nuniform float iSampleRate;\n' +
+      '// MOLTamp extras: x = activity energy 0..1, y = time speed, z = state code, w = event pulse\nuniform vec4 iMoltamp;\n';
+    for (var c = 0; c < 4; c++) h += 'uniform ' + samplerType(pass.byChannel[c]) + ' iChannel' + c + ';\n';
+    if (isGL2) {
+      h += 'out vec4 st_FragColor;\n';
+    } else {
+      h += 'vec4 texture(sampler2D s, vec2 c) { return texture2D(s, c); }\n' +
+        'vec4 texture(sampler2D s, vec2 c, float b) { return texture2D(s, c, b); }\n' +
+        'vec4 texture(samplerCube s, vec3 c) { return textureCube(s, c); }\n' +
+        (ext.lod ? 'vec4 textureLod(sampler2D s, vec2 c, float l) { return texture2DLodEXT(s, c, l); }\n' : '');
+    }
+    return h;
+  }
+
+  function footer(pass) {
+    var outVar = isGL2 ? 'st_FragColor' : 'gl_FragColor';
+    return '\nvoid main() {\n  vec4 c = vec4(0.0, 0.0, 0.0, 1.0);\n  mainImage(c, gl_FragCoord.xy);\n' +
+      (pass.output === 'image' ? '  c.w = 1.0;\n' : '') + '  ' + outVar + ' = c;\n}\n';
+  }
+
+  function countLines(s) { return s.split('\n').length - 1; }
+
+  var vsObj = gl.createShader(gl.VERTEX_SHADER);
+  gl.shaderSource(vsObj, VS);
+  gl.compileShader(vsObj);
+
+  var compileStart = performance.now();
+  var passes = cfg.passes.map(function (p) {
+    var pass = { name: p.name, output: p.output, inputs: p.inputs || [], byChannel: {} };
+    pass.inputs.forEach(function (inp) { pass.byChannel[inp.channel] = inp; });
+    var head = header(pass) + (cfg.common ? cfg.common + '\n' : '');
+    pass.lineOffset = countLines(head);
+    pass.fs = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(pass.fs, head + p.code + footer(pass));
+    gl.compileShader(pass.fs);
+    pass.prog = gl.createProgram();
+    gl.attachShader(pass.prog, vsObj);
+    gl.attachShader(pass.prog, pass.fs);
+    gl.bindAttribLocation(pass.prog, 0, 'pos');
+    gl.linkProgram(pass.prog);
+    return pass;
+  });
+
+  function remapLog(pass, log) {
+    // Report line numbers relative to the pass source (Common lines included in the offset).
+    return log.replace(/ERROR: 0:(\d+)/g, function (_, n) { return 'line ' + (Number(n) - pass.lineOffset); });
+  }
+
+  function finishLink() {
+    for (var i = 0; i < passes.length; i++) {
+      var p = passes[i];
+      if (!gl.getProgramParameter(p.prog, gl.LINK_STATUS)) {
+        var log = gl.getShaderInfoLog(p.fs) || gl.getProgramInfoLog(p.prog) || 'link failed';
+        fail('[' + p.name + '] ' + remapLog(p, log).slice(0, 600));
+        return false;
+      }
+      p.u = {};
+      ['iResolution', 'iTime', 'iTimeDelta', 'iFrameRate', 'iFrame', 'iMouse', 'iDate', 'iSampleRate', 'iMoltamp'].forEach(function (n) {
+        p.u[n] = gl.getUniformLocation(p.prog, n);
+      });
+      p.u.iChannelTime = gl.getUniformLocation(p.prog, 'iChannelTime');
+      p.u.iChannelResolution = gl.getUniformLocation(p.prog, 'iChannelResolution');
+      p.u.ch = [0, 1, 2, 3].map(function (c) { return gl.getUniformLocation(p.prog, 'iChannel' + c); });
+      p.inputs.forEach(function (inp) {
+        if (inp.kind === 'audio') inp.res = makeAudio();
+        else if (inp.kind === 'gen') inp.res = makeGenerated(inp);
+        else if (inp.kind === 'image') inp.res = makeImage(inp);
+        else if (inp.kind === 'buffer' && inp.filter === 'mipmap') buffers[inp.buffer].wantMips = true;
+      });
+    }
+    debug.compileMs = Math.round(performance.now() - compileStart);
+    return true;
+  }
+
+  // ---------------------------------------------------------------- buffers
+  var buffers = {};
+  passes.forEach(function (p) { if (p.output !== 'image') buffers[p.output] = { pair: null, cur: 0, w: 0, h: 0, wantMips: false }; });
+
+  function ensureBuffers(w, h) {
+    Object.keys(buffers).forEach(function (k) {
+      var b = buffers[k];
+      if (b.w === w && b.h === h) return;
+      if (b.pair) b.pair.forEach(function (t) { gl.deleteTexture(t.tex); gl.deleteFramebuffer(t.fb); });
+      b.pair = [makeTarget(w, h), makeTarget(w, h)];
+      b.cur = 0; b.w = w; b.h = h;
+    });
+  }
+
+  // ---------------------------------------------------------------- geometry
+  var vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+  // ---------------------------------------------------------------- MOLTamp reactivity
+  // Claude's shell state drives the time speed and the energy of the simulated audio spectrum
+  // (widgets get no audio data); terminal throughput adds on top.
+  var STATES = {
+    unknown: { speed: 1.0, energy: 0.5, code: 0 },
+    idle: { speed: 0.35, energy: 0.12, code: 1 },
+    thinking: { speed: 0.8, energy: 0.45, code: 2 },
+    streaming: { speed: 1.25, energy: 0.8, code: 3 },
+    'tool-use': { speed: 1.6, energy: 0.9, code: 4 },
+    permission: { speed: 0.5, energy: 0.35, code: 5 },
+    error: { speed: 0.25, energy: 0.2, code: 6 },
+    complete: { speed: 1.0, energy: 0.6, code: 7 }
+  };
+  var react = { state: 'unknown', since: 0, activity: 'idle', bytes: 0, speed: 1, energy: 0.5, pulse: 0 };
+  var reactive = opts.reactive !== false;
+
+  window.addEventListener('message', function (e) {
+    var d = e.data;
+    if (d && d.type === 'moltamp:push' && d.subscriptionId === 'shell-state' && STATES[d.data]) {
+      react.state = d.data;
+      react.since = performance.now();
+      if (d.data === 'complete' || d.data === 'error' || d.data === 'permission') react.pulse = 1;
+    }
+  });
+
+  if (window.moltamp && moltamp.subscribe) {
+    try { moltamp.subscribe('telemetry', 'activity', function (v) { react.activity = v || 'idle'; }); } catch (e) { /* store missing */ }
+    try { moltamp.subscribe('telemetry', 'bytesPerSec', function (v) { react.bytes = Number(v) || 0; }); } catch (e) { /* store missing */ }
+  }
+
+  function updateReactivity(now, dt) {
+    var name = react.state;
+    // "complete" is a transient state: fall back to idle after a few seconds.
+    if (name === 'complete' && now - react.since > 4000) name = react.state = 'idle';
+    var s = STATES[name] || STATES.unknown;
+    var act = react.activity === 'high' ? 0.35 : react.activity === 'low' ? 0.15 : 0;
+    var bytes = Math.min(0.3, Math.log(1 + react.bytes) / Math.LN10 / 20);
+    var targetSpeed = reactive ? s.speed + act * 0.8 + bytes : 1;
+    var targetEnergy = reactive ? Math.min(1, s.energy + act + bytes) : 0.5;
+    var k = 1 - Math.exp(-dt / 0.6);
+    react.speed += (targetSpeed * (opts.speed || 1) - react.speed) * k;
+    react.energy += (targetEnergy - react.energy) * k;
+    react.pulse *= Math.exp(-dt / 0.5);
+  }
+
+  var fftSmooth = new Float32Array(AUDIO_W);
+  function updateFakeAudio(t) {
+    var e = react.energy, bpm = 70 + 80 * e, ph = (t * bpm / 60) % 1, kick = Math.exp(-ph * 7);
+    for (var i = 0; i < AUDIO_W; i++) {
+      var f = i / AUDIO_W;
+      var base = Math.pow(1 - f, 2.2);
+      var wob = 0.5 + 0.5 * Math.sin(i * 0.37 + t * 3.1) * Math.sin(i * 0.11 - t * 1.7);
+      var v = e * (0.55 * base + 0.3 * wob * (1 - 0.6 * f));
+      if (f < 0.06) v += kick * e * 0.9 * (1 - f / 0.06);
+      v += react.pulse * 0.4 * base;
+      fftSmooth[i] = fftSmooth[i] * 0.8 + Math.min(1, v) * 0.2;
+      audioData[i] = (fftSmooth[i] * 255) | 0;
+      var w = Math.sin(6.2831853 * f * 4 + t * 8) * 0.6 + Math.sin(6.2831853 * f * 17 + t * 13) * 0.3;
+      audioData[AUDIO_W + i] = 128 + ((w * 127 * e * (0.5 + 0.5 * kick)) | 0);
+    }
+    gl.bindTexture(gl.TEXTURE_2D, audioTex.tex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, AUDIO_W, 2, isGL2 ? gl.RED : gl.LUMINANCE, gl.UNSIGNED_BYTE, audioData);
+  }
+
+  // ---------------------------------------------------------------- mouse (Shadertoy iMouse semantics)
+  var mouse = [0, 0, 0, 0], mouseDown = false, clickFrame = false;
+  function mousePos(e) {
+    var r = canvas.getBoundingClientRect();
+    return [(e.clientX - r.left) * canvas.width / r.width, canvas.height - (e.clientY - r.top) * canvas.height / r.height];
+  }
+  canvas.addEventListener('pointerdown', function (e) {
+    // Left button only, like Shadertoy: right-click and ctrl-click stay with the host (widget context menu).
+    if (e.button !== 0 || e.ctrlKey) return;
+    var p = mousePos(e);
+    mouseDown = true; clickFrame = true;
+    mouse = [p[0], p[1], p[0], p[1]];
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+  });
+  canvas.addEventListener('pointermove', function (e) {
+    if (!mouseDown) return;
+    var p = mousePos(e);
+    mouse[0] = p[0]; mouse[1] = p[1];
+  });
+  function release() { if (mouseDown) { mouseDown = false; mouse[2] = -Math.abs(mouse[2]); } }
+  canvas.addEventListener('pointerup', release);
+  canvas.addEventListener('pointercancel', release);
+
+  // ---------------------------------------------------------------- visibility: skip GPU work when hidden
+  var visible = true;
+  if ('IntersectionObserver' in window) {
+    new IntersectionObserver(function (entries) { visible = entries[entries.length - 1].isIntersecting; }).observe(canvas);
+  }
+  document.addEventListener('visibilitychange', function () { if (document.hidden) visible = false; });
+
+  // ---------------------------------------------------------------- frame loop
+  var simTime = 0, frameNo = 0, lastNow = 0, fpsAcc = 0, fpsFrames = 0, fps = 60, started = false;
+  var chanTime = new Float32Array(4), chanRes = new Float32Array(12);
+
+  function resize() {
+    var dpr = window.devicePixelRatio || 1, scale = opts.scale || 1;
+    var cw = canvas.clientWidth * dpr, ch = canvas.clientHeight * dpr;
+    // Pixel budget keeps heavy raymarchers smooth on Retina or very large panels.
+    var budget = opts.maxPixels || 600000;
+    if (cw * ch * scale * scale > budget) scale = Math.sqrt(budget / (cw * ch));
+    var w = Math.max(1, Math.round(cw * scale));
+    var h = Math.max(1, Math.round(ch * scale));
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+    ensureBuffers(w, h);
+    return [w, h];
+  }
+
+  function bindInputs(pass) {
+    for (var c = 0; c < 4; c++) {
+      var inp = pass.byChannel[c], res = null, target = gl.TEXTURE_2D, hasMips = false;
+      gl.activeTexture(gl.TEXTURE0 + c);
+      chanRes[c * 3] = chanRes[c * 3 + 1] = chanRes[c * 3 + 2] = 0;
+      if (inp) {
+        if (inp.kind === 'buffer') {
+          var b = buffers[inp.buffer];
+          if (b && b.pair) {
+            res = { tex: b.pair[b.cur].tex, target: gl.TEXTURE_2D };
+            hasMips = b.wantMips;
+            chanRes[c * 3] = b.w; chanRes[c * 3 + 1] = b.h; chanRes[c * 3 + 2] = 1;
+          }
+        } else if (inp.res) {
+          res = inp.res; target = res.target; hasMips = res.mips;
+          chanRes[c * 3] = res.w; chanRes[c * 3 + 1] = res.h; chanRes[c * 3 + 2] = res.d;
+        }
+      }
+      if (res) {
+        gl.bindTexture(res.target, res.tex);
+        var filter = inp.filter || 'linear';
+        if (inp.kind === 'buffer' && filter !== 'nearest' && !rtFormat.linear) filter = 'nearest';
+        applySampler(res.target, filter, isGL2 || res.target !== gl.TEXTURE_2D || inp.kind !== 'buffer' ? inp.wrap : 'clamp', hasMips);
+      } else {
+        gl.bindTexture(gl.TEXTURE_2D, null);
+      }
+      gl.uniform1i(pass.u.ch[c], c);
+    }
+  }
+
+  function draw(now) {
+    var dt = lastNow ? Math.min((now - lastNow) / 1000, 0.1) : 1 / 60;
+    lastNow = now;
+    fpsAcc += dt; fpsFrames++;
+    if (fpsAcc > 0.5) { fps = fpsFrames / fpsAcc; fpsAcc = 0; fpsFrames = 0; debug.fps = Math.round(fps); }
+
+    updateReactivity(now, dt);
+    var simDt = dt * react.speed;
+    simTime += simDt;
+    if (audioTex) updateFakeAudio(simTime);
+
+    var size = resize(), w = size[0], h = size[1];
+    var date = new Date();
+    var secs = date.getHours() * 3600 + date.getMinutes() * 60 + date.getSeconds() + date.getMilliseconds() / 1000;
+    for (var c = 0; c < 4; c++) chanTime[c] = simTime;
+    if (!clickFrame) mouse[3] = -Math.abs(mouse[3]);
+
+    for (var i = 0; i < passes.length; i++) {
+      var p = passes[i], target = null, b = null;
+      if (p.output !== 'image') { b = buffers[p.output]; target = b.pair[1 - b.cur]; }
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target ? target.fb : null);
+      gl.viewport(0, 0, w, h);
+      gl.useProgram(p.prog);
+      bindInputs(p);
+      gl.uniform3f(p.u.iResolution, w, h, 1);
+      gl.uniform1f(p.u.iTime, simTime);
+      gl.uniform1f(p.u.iTimeDelta, simDt);
+      gl.uniform1f(p.u.iFrameRate, fps);
+      gl.uniform1i(p.u.iFrame, frameNo);
+      gl.uniform4f(p.u.iMouse, mouse[0], mouse[1], mouse[2], mouse[3]);
+      gl.uniform4f(p.u.iDate, date.getFullYear(), date.getMonth(), date.getDate(), secs);
+      gl.uniform1f(p.u.iSampleRate, 44100);
+      gl.uniform4f(p.u.iMoltamp, react.energy, react.speed, (STATES[react.state] || STATES.unknown).code, react.pulse);
+      if (p.u.iChannelTime) gl.uniform1fv(p.u.iChannelTime, chanTime);
+      if (p.u.iChannelResolution) gl.uniform3fv(p.u.iChannelResolution, chanRes);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      if (b) {
+        b.cur = 1 - b.cur;
+        if (b.wantMips) { gl.bindTexture(gl.TEXTURE_2D, b.pair[b.cur].tex); gl.generateMipmap(gl.TEXTURE_2D); }
+      }
+    }
+    clickFrame = false;
+    frameNo++;
+    debug.frame = frameNo;
+  }
+
+  var lastDraw = 0;
+  function loop(now) {
+    requestAnimationFrame(loop);
+    if (!started) {
+      if (ext.parallel && !passes.every(function (p) { return gl.getProgramParameter(p.prog, ext.parallel.COMPLETION_STATUS_KHR); })) return;
+      started = true;
+      if (!finishLink()) { started = 'failed'; return; }
+      debug.ready = true;
+    }
+    if (started !== true || !visible) { lastNow = 0; return; }
+    var cap = opts.fpsCap || 60;
+    if (now - lastDraw < 1000 / cap - 2) return;
+    lastDraw = now;
+    draw(now);
+  }
+
+  // Per-widget overrides persisted with moltamp.settings: { scale, maxPixels, fpsCap, speed, reactive }.
+  (function () {
+    if (!window.moltamp || !moltamp.settings) { requestAnimationFrame(loop); return; }
+    moltamp.settings.read().then(function (saved) {
+      saved = saved || {};
+      ['scale', 'maxPixels', 'fpsCap', 'speed', 'reactive'].forEach(function (k) { if (saved[k] !== undefined) opts[k] = saved[k]; });
+      reactive = opts.reactive !== false;
+    }).catch(function () { /* first run: no settings yet */ }).then(function () { requestAnimationFrame(loop); });
+  })();
+})();
+
+</script>

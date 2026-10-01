@@ -1,0 +1,17 @@
+{
+  "id": "st-hive-lattice",
+  "name": "Hex Hive Tunnel",
+  "version": "1.0.0",
+  "description": "Flight through a twisting hexagonal crystal tunnel. By nobody93.",
+  "author": "nobody93 (port: j0j0)",
+  "category": "Shaders",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "telemetry.activity",
+      "telemetry.bytesPerSec"
+    ]
+  }
+}

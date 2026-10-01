@@ -1,0 +1,17 @@
+{
+  "id": "shadertoy-runner",
+  "name": "Shader Runner",
+  "version": "1.0.0",
+  "description": "Runs Shadertoy-style GLSL (Common, Buffers A-D, Image); time and intensity follow Claude's activity.",
+  "author": "j0j0",
+  "category": "Shaders",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "telemetry.activity",
+      "telemetry.bytesPerSec"
+    ]
+  }
+}

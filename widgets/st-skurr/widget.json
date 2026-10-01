@@ -1,0 +1,17 @@
+{
+  "id": "st-skurr",
+  "name": "Psyche Skull",
+  "version": "1.0.0",
+  "description": "Psychedelic skull warping to a beat driven by Claude's activity. By im_paul_hi.",
+  "author": "im_paul_hi (port: j0j0)",
+  "category": "Shaders",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "telemetry.activity",
+      "telemetry.bytesPerSec"
+    ]
+  }
+}

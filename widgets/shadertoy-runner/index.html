@@ -1,0 +1,672 @@
+<!--
+  Shader Runner (demo) — by j0j0
+  Original: (original demo, no Shadertoy source)
+  License: CC0 (demo shader)
+  Ported to MOLTamp with shadertoy-runner. Changes from the original:
+     - Generic runner: replace the SHADER object below to run another shader.
+     - passes: Buffer A-D then Image (any order is fine); "common" is prepended to every pass.
+     - inputs per pass: {channel, kind: "buffer"|"audio"|"gen"|"image", buffer: "A"-"D", gen: "gray"|"rgba"|"rgba-iq"|"volume"|"fbm"|"sky", src: "data:..."}.
+     - audio = simulated 512x2 spectrum (row 0 FFT, row 1 wave) driven by Claude state; uniform iMoltamp = (energy, speed, state, pulse).
+-->
+<div id="st-root"><canvas id="st-canvas"></canvas><div id="st-msg"></div></div>
+
+<style>
+  #st-root { position: absolute; inset: 0; overflow: hidden; background: var(--c-chrome-bg); }
+  #st-canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  #st-msg {
+    position: absolute; left: 6px; right: 6px; bottom: 6px; display: none; padding: 4px 6px;
+    color: var(--t-red); background: var(--c-chrome-bg); border: 1px solid var(--c-chrome-border);
+    font: 10px/1.35 'SF Mono', monospace; white-space: pre-wrap; max-height: 80%; overflow: hidden;
+  }
+</style>
+
+<script>
+  /* Shader Runner (demo) — j0j0 — (original demo, no Shadertoy source) — CC0 (demo shader) */
+  var SHADER = {"id": "shadertoy-runner", "title": "Shader Runner (demo)", "author": "j0j0", "url": "(original demo, no Shadertoy source)", "license": "CC0 (demo shader)", "common": "", "passes": [{"name": "Buffer A", "output": "A", "code": "// Feedback trails: orbiting sparks advected and faded every frame.\nvoid mainImage(out vec4 o, in vec2 fc)\n{\n    vec2 uv = fc / iResolution.xy;\n    vec2 p = (2.0 * fc - iResolution.xy) / iResolution.y;\n    // Slight zoom + swirl of the previous frame gives the trail motion.\n    vec2 q = (uv - 0.5) * 0.992;\n    float a = 0.004 + 0.01 * iMoltamp.x;\n    q = mat2(cos(a), -sin(a), sin(a), cos(a)) * q + 0.5;\n    vec3 prev = texture(iChannel0, q).rgb * 0.94;\n\n    float bass = texture(iChannel1, vec2(0.02, 0.25)).x;\n    vec3 col = vec3(0.0);\n    for (int i = 0; i < 6; i++) {\n        float fi = float(i);\n        float t = iTime * (0.6 + 0.1 * fi) + fi * 1.047;\n        vec2 c = vec2(cos(t), sin(t * 1.3)) * (0.35 + 0.25 * sin(iTime * 0.2 + fi));\n        float d = length(p - c);\n        col += (0.5 + 0.5 * cos(fi + iTime + vec3(0.0, 2.0, 4.0))) * (0.004 + 0.01 * bass) / (d * d + 0.002);\n    }\n    o = vec4(prev + col * 0.03, 1.0);\n}\n", "inputs": [{"channel": 0, "kind": "buffer", "buffer": "A", "filter": "linear", "wrap": "clamp"}, {"channel": 1, "kind": "audio", "filter": "linear", "wrap": "clamp"}]}, {"name": "Image", "output": "image", "code": "// Tone-map the feedback buffer; a pulse flashes on Claude events (complete / error / permission).\nvoid mainImage(out vec4 o, in vec2 fc)\n{\n    vec3 c = texture(iChannel0, fc / iResolution.xy).rgb;\n    c = 1.0 - exp(-c * (1.2 + iMoltamp.w * 2.0));\n    o = vec4(pow(c, vec3(0.85)), 1.0);\n}\n", "inputs": [{"channel": 0, "kind": "buffer", "buffer": "A", "filter": "linear", "wrap": "clamp"}]}], "options": {"scale": 1, "maxPixels": 600000, "fpsCap": 60, "reactive": true}};
+</script>
+
+<script>
+// shadertoy-runner — runs a Shadertoy shader (Common + Buffer A-D + Image) inside a MOLTamp widget.
+// Reads the global SHADER config injected above this script. WebGL2 first, WebGL1 best effort.
+(function () {
+  'use strict';
+
+  var cfg = window.SHADER;
+  var opts = cfg.options || {};
+  var canvas = document.getElementById('st-canvas');
+  var msg = document.getElementById('st-msg');
+  var debug = window.__shadertoyRunner = { id: cfg.id, ready: false, errors: [], fps: 0, frame: 0, context: null, compileMs: 0 };
+
+  function fail(text) {
+    debug.errors.push(text);
+    msg.textContent = text;
+    msg.style.display = 'block';
+  }
+
+  var ctxAttrs = { antialias: false, alpha: false, depth: false, stencil: false, premultipliedAlpha: false, preserveDrawingBuffer: false, powerPreference: 'high-performance' };
+  var gl = canvas.getContext('webgl2', ctxAttrs);
+  var isGL2 = !!gl;
+  if (!gl) gl = canvas.getContext('webgl', ctxAttrs);
+  if (!gl) { fail('WebGL unavailable in this widget'); return; }
+  debug.context = isGL2 ? 'webgl2' : 'webgl1';
+
+  var ext = {};
+  if (isGL2) {
+    ext.cbf = gl.getExtension('EXT_color_buffer_float');
+    ext.cbhf = gl.getExtension('EXT_color_buffer_half_float');
+    ext.fl = gl.getExtension('OES_texture_float_linear');
+  } else {
+    ext.deriv = gl.getExtension('OES_standard_derivatives');
+    ext.lod = gl.getExtension('EXT_shader_texture_lod');
+    ext.tf = gl.getExtension('OES_texture_float');
+    ext.cbf = gl.getExtension('WEBGL_color_buffer_float');
+  }
+  ext.parallel = gl.getExtension('KHR_parallel_shader_compile');
+
+  // ---------------------------------------------------------------- generated textures
+  // Seeded PRNG so generated noise is identical on every load.
+  function prng(seed) {
+    var a = seed >>> 0;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      var t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function genNoise(size, mode, seed) {
+    var rnd = prng(seed || 1), n = size * size, d = new Uint8Array(n * 4), i;
+    if (mode === 'gray') {
+      for (i = 0; i < n; i++) { var v = (rnd() * 256) | 0; d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = d[i * 4 + 3] = v; }
+      return d;
+    }
+    for (i = 0; i < n * 4; i++) d[i] = (rnd() * 256) | 0;
+    if (mode === 'rgba-iq') {
+      // iq's 3D-noise-from-2D trick reads .yx at uv + (37,17)*z: G must equal R shifted by (37,17), A likewise from B.
+      for (var y = 0; y < size; y++) for (var x = 0; x < size; x++) {
+        var j = ((((y - 17) % size) + size) % size) * size + ((((x - 37) % size) + size) % size);
+        d[(y * size + x) * 4 + 1] = d[j * 4];
+        d[(y * size + x) * 4 + 3] = d[j * 4 + 2];
+      }
+    }
+    return d;
+  }
+
+  function genVolume(size, seed) {
+    var rnd = prng(seed || 7), n = size * size * size, d = new Uint8Array(n * 4);
+    for (var i = 0; i < n; i++) { var v = (rnd() * 256) | 0; d[i * 4] = d[i * 4 + 1] = d[i * 4 + 2] = d[i * 4 + 3] = v; }
+    return d;
+  }
+
+  // Tileable value-noise fbm, colourised through a list of RGB stops: stands in for photo textures.
+  function genFbm(size, spec) {
+    var rnd = prng(spec.seed || 3), g = 32, lattice = new Float32Array(g * g), i;
+    for (i = 0; i < g * g; i++) lattice[i] = rnd();
+    function vnoise(x, y, period) {
+      var xi = Math.floor(x), yi = Math.floor(y), fx = x - xi, fy = y - yi;
+      fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
+      var x0 = ((xi % period) + period) % period, y0 = ((yi % period) + period) % period;
+      var x1 = (x0 + 1) % period, y1 = (y0 + 1) % period;
+      var a = lattice[(y0 % g) * g + (x0 % g)], b = lattice[(y0 % g) * g + (x1 % g)];
+      var c = lattice[(y1 % g) * g + (x0 % g)], e = lattice[(y1 % g) * g + (x1 % g)];
+      return a + (b - a) * fx + (c - a) * fy + (a - b - c + e) * fx * fy;
+    }
+    var stops = spec.colors, oct = spec.octaves || 5, base = spec.scale || 4, d = new Uint8Array(size * size * 4);
+    for (var y = 0; y < size; y++) for (var x = 0; x < size; x++) {
+      var v = 0, amp = 0.5, freq = base, norm = 0;
+      for (var o = 0; o < oct; o++) {
+        v += amp * vnoise(x / size * freq, y / size * freq, freq);
+        norm += amp; amp *= 0.5; freq *= 2;
+      }
+      v = Math.min(1, Math.max(0, (v / norm - 0.5) * (spec.contrast || 1.6) + 0.5));
+      var f = v * (stops.length - 1), k = Math.min(stops.length - 2, Math.floor(f)), t = f - k;
+      var p = (y * size + x) * 4;
+      for (var ch = 0; ch < 3; ch++) d[p + ch] = (stops[k][ch] + (stops[k + 1][ch] - stops[k][ch]) * t) | 0;
+      d[p + 3] = (v * 255) | 0;
+    }
+    return d;
+  }
+
+  // Procedural sky cubemap (gradient + sun) in place of Shadertoy's photo cubemaps.
+  function genSkyFace(size, face, spec) {
+    var d = new Uint8Array(size * size * 4), sun = spec.sun || [0.4, 0.5, 0.75];
+    var sl = Math.sqrt(sun[0] * sun[0] + sun[1] * sun[1] + sun[2] * sun[2]);
+    for (var y = 0; y < size; y++) for (var x = 0; x < size; x++) {
+      var u = (x + 0.5) / size * 2 - 1, v = (y + 0.5) / size * 2 - 1, dx, dy, dz;
+      switch (face) {
+        case 0: dx = 1; dy = -v; dz = -u; break;
+        case 1: dx = -1; dy = -v; dz = u; break;
+        case 2: dx = u; dy = 1; dz = v; break;
+        case 3: dx = u; dy = -1; dz = -v; break;
+        case 4: dx = u; dy = -v; dz = 1; break;
+        default: dx = -u; dy = -v; dz = -1;
+      }
+      var l = Math.sqrt(dx * dx + dy * dy + dz * dz); dx /= l; dy /= l; dz /= l;
+      var h = Math.max(-1, Math.min(1, dy)), c = [0, 0, 0];
+      var top = spec.zenith || [40, 70, 130], hor = spec.horizon || [190, 175, 160], gnd = spec.ground || [45, 40, 38];
+      var w = h > 0 ? Math.pow(h, 0.5) : Math.pow(-h, 0.35);
+      for (var ch = 0; ch < 3; ch++) c[ch] = h > 0 ? hor[ch] + (top[ch] - hor[ch]) * w : hor[ch] + (gnd[ch] - hor[ch]) * w;
+      var s = Math.max(0, (dx * sun[0] + dy * sun[1] + dz * sun[2]) / sl), glow = Math.pow(s, 64) * 255 + Math.pow(s, 6) * 60;
+      var p = (y * size + x) * 4;
+      for (ch = 0; ch < 3; ch++) d[p + ch] = Math.min(255, c[ch] + glow);
+      d[p + 3] = 255;
+    }
+    return d;
+  }
+
+  // Font atlas like Shadertoy's "Font 1": 16x16 ASCII grid, glyph coverage in RGB and a signed
+  // distance in alpha (0.5 = edge, below = inside), so SDF text code keeps working.
+  function edt1d(f, n, d, v, z) {
+    var k = 0, q, s;
+    v[0] = 0; z[0] = -1e20; z[1] = 1e20;
+    for (q = 1; q < n; q++) {
+      s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+      while (s <= z[k]) { k--; s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]); }
+      k++; v[k] = q; z[k] = s; z[k + 1] = 1e20;
+    }
+    for (k = 0, q = 0; q < n; q++) {
+      while (z[k + 1] < q) k++;
+      d[q] = (q - v[k]) * (q - v[k]) + f[v[k]];
+    }
+  }
+
+  function edt2d(grid, size) {
+    var f = new Float64Array(size), d = new Float64Array(size), v = new Int32Array(size), z = new Float64Array(size + 1), x, y;
+    for (x = 0; x < size; x++) {
+      for (y = 0; y < size; y++) f[y] = grid[y * size + x];
+      edt1d(f, size, d, v, z);
+      for (y = 0; y < size; y++) grid[y * size + x] = d[y];
+    }
+    for (y = 0; y < size; y++) {
+      for (x = 0; x < size; x++) f[x] = grid[y * size + x];
+      edt1d(f, size, d, v, z);
+      for (x = 0; x < size; x++) grid[y * size + x] = d[x];
+    }
+  }
+
+  function genFont(size) {
+    var cell = size / 16, c = document.createElement('canvas');
+    c.width = c.height = size;
+    var g = c.getContext('2d');
+    g.fillStyle = '#000';
+    g.fillRect(0, 0, size, size);
+    g.fillStyle = '#fff';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.font = 'bold ' + Math.round(cell * 0.78) + 'px Menlo, Monaco, "SF Mono", monospace';
+    for (var code = 33; code < 127; code++) {
+      g.fillText(String.fromCharCode(code), (code % 16 + 0.5) * cell, (Math.floor(code / 16) + 0.5) * cell + cell * 0.04);
+    }
+    var img = g.getImageData(0, 0, size, size).data, n = size * size, i;
+    var outside = new Float64Array(n), inside = new Float64Array(n);
+    for (i = 0; i < n; i++) { var on = img[i * 4] > 127; outside[i] = on ? 0 : 1e20; inside[i] = on ? 1e20 : 0; }
+    edt2d(outside, size);
+    edt2d(inside, size);
+    var spread = cell / 4, out = new Uint8Array(n * 4);
+    for (i = 0; i < n; i++) {
+      var dist = Math.sqrt(outside[i]) - Math.sqrt(inside[i]);
+      var w = 0.5 + 0.5 * Math.max(-1, Math.min(1, dist / spread));
+      // Canvas rows go top-down, GL rows bottom-up: flip so glyph 0 sits in the top row like Shadertoy.
+      var y = Math.floor(i / size), j = ((size - 1 - y) * size + (i % size)) * 4;
+      out[j] = out[j + 1] = out[j + 2] = img[i * 4];
+      out[j + 3] = Math.round(w * 255);
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------- GL helpers
+  var FILTERS = {
+    nearest: [gl.NEAREST, gl.NEAREST],
+    linear: [gl.LINEAR, gl.LINEAR],
+    mipmap: [gl.LINEAR_MIPMAP_LINEAR, gl.LINEAR]
+  };
+
+  function applySampler(target, filter, wrap, hasMips) {
+    var f = FILTERS[filter] || FILTERS.linear;
+    var minF = (filter === 'mipmap' && !hasMips) ? gl.LINEAR : f[0];
+    gl.texParameteri(target, gl.TEXTURE_MIN_FILTER, minF);
+    gl.texParameteri(target, gl.TEXTURE_MAG_FILTER, f[1]);
+    var w = wrap === 'repeat' ? gl.REPEAT : gl.CLAMP_TO_EDGE;
+    gl.texParameteri(target, gl.TEXTURE_WRAP_S, w);
+    gl.texParameteri(target, gl.TEXTURE_WRAP_T, w);
+    if (isGL2 && target === gl.TEXTURE_3D) gl.texParameteri(target, gl.TEXTURE_WRAP_R, w);
+  }
+
+  function upload2D(w, h, data) {
+    var t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    var pot = (w & (w - 1)) === 0 && (h & (h - 1)) === 0;
+    if (isGL2 || pot) gl.generateMipmap(gl.TEXTURE_2D);
+    return { target: gl.TEXTURE_2D, tex: t, w: w, h: h, d: 1, mips: isGL2 || pot };
+  }
+
+  var genCache = {};
+  function makeGenerated(spec) {
+    var key = JSON.stringify(spec);
+    if (genCache[key]) return genCache[key];
+    var res, size = spec.size || 256;
+    if (spec.gen === 'volume') {
+      if (!isGL2) return null;
+      var t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_3D, t);
+      gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA8, size, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, genVolume(size, spec.seed));
+      gl.generateMipmap(gl.TEXTURE_3D);
+      res = { target: gl.TEXTURE_3D, tex: t, w: size, h: size, d: size, mips: true };
+    } else if (spec.gen === 'sky') {
+      var ct = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_CUBE_MAP, ct);
+      for (var f = 0; f < 6; f++) {
+        gl.texImage2D(gl.TEXTURE_CUBE_MAP_POSITIVE_X + f, 0, gl.RGBA, size, size, 0, gl.RGBA, gl.UNSIGNED_BYTE, genSkyFace(size, f, spec));
+      }
+      gl.generateMipmap(gl.TEXTURE_CUBE_MAP);
+      res = { target: gl.TEXTURE_CUBE_MAP, tex: ct, w: size, h: size, d: 1, mips: true };
+    } else if (spec.gen === 'fbm') {
+      res = upload2D(size, size, genFbm(size, spec));
+    } else if (spec.gen === 'font') {
+      res = upload2D(size, size, genFont(size));
+    } else {
+      res = upload2D(size, size, genNoise(size, spec.gen, spec.seed));
+    }
+    genCache[key] = res;
+    return res;
+  }
+
+  // Images embedded as data: URIs (the widget CSP only allows data:/blob: images; they do not taint WebGL).
+  function makeImage(spec) {
+    var holder = { target: gl.TEXTURE_2D, tex: gl.createTexture(), w: 1, h: 1, d: 1, mips: false };
+    gl.bindTexture(gl.TEXTURE_2D, holder.tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
+    var img = new Image();
+    img.onload = function () {
+      gl.bindTexture(gl.TEXTURE_2D, holder.tex);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, spec.vflip !== false);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      holder.w = img.width; holder.h = img.height;
+      var pot = (img.width & (img.width - 1)) === 0 && (img.height & (img.height - 1)) === 0;
+      if (isGL2 || pot) { gl.generateMipmap(gl.TEXTURE_2D); holder.mips = true; }
+    };
+    img.src = spec.src;
+    return holder;
+  }
+
+  // Audio texture laid out like Shadertoy's: 512x2, row 0 = FFT, row 1 = waveform.
+  var AUDIO_W = 512;
+  var audioData = new Uint8Array(AUDIO_W * 2);
+  var audioTex = null;
+  function makeAudio() {
+    if (audioTex) return audioTex;
+    var t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    if (isGL2) gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, AUDIO_W, 2, 0, gl.RED, gl.UNSIGNED_BYTE, audioData);
+    else gl.texImage2D(gl.TEXTURE_2D, 0, gl.LUMINANCE, AUDIO_W, 2, 0, gl.LUMINANCE, gl.UNSIGNED_BYTE, audioData);
+    audioTex = { target: gl.TEXTURE_2D, tex: t, w: AUDIO_W, h: 2, d: 1, mips: false, audio: true };
+    return audioTex;
+  }
+
+  // Render targets: float when the GPU can render to it, like Shadertoy's buffers.
+  var rtFormat = (function () {
+    if (isGL2) {
+      if (ext.cbf) return { internal: gl.RGBA32F, format: gl.RGBA, type: gl.FLOAT, linear: !!ext.fl };
+      if (ext.cbhf) return { internal: gl.RGBA16F, format: gl.RGBA, type: gl.HALF_FLOAT, linear: true };
+      return { internal: gl.RGBA8, format: gl.RGBA, type: gl.UNSIGNED_BYTE, linear: true };
+    }
+    if (ext.tf && ext.cbf) return { internal: gl.RGBA, format: gl.RGBA, type: gl.FLOAT, linear: !!gl.getExtension('OES_texture_float_linear') };
+    return { internal: gl.RGBA, format: gl.RGBA, type: gl.UNSIGNED_BYTE, linear: true };
+  })();
+
+  function makeTarget(w, h) {
+    var t = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texImage2D(gl.TEXTURE_2D, 0, rtFormat.internal, w, h, 0, rtFormat.format, rtFormat.type, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    var fb = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, t, 0);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    return { tex: t, fb: fb };
+  }
+
+  // ---------------------------------------------------------------- programs
+  var VS = isGL2
+    ? '#version 300 es\nlayout(location = 0) in vec2 pos;\nvoid main() { gl_Position = vec4(pos, 0.0, 1.0); }\n'
+    : 'attribute vec2 pos;\nvoid main() { gl_Position = vec4(pos, 0.0, 1.0); }\n';
+
+  function samplerType(inp) {
+    if (!inp) return 'sampler2D';
+    if (inp.kind === 'gen' && inp.gen === 'sky') return 'samplerCube';
+    if (inp.kind === 'gen' && inp.gen === 'volume') return 'sampler3D';
+    return 'sampler2D';
+  }
+
+  function header(pass) {
+    var h;
+    if (isGL2) {
+      h = '#version 300 es\nprecision highp float;\nprecision highp int;\nprecision highp sampler2D;\nprecision highp sampler3D;\nprecision highp samplerCube;\n';
+    } else {
+      h = (ext.deriv ? '#extension GL_OES_standard_derivatives : enable\n' : '') +
+        (ext.lod ? '#extension GL_EXT_shader_texture_lod : enable\n' : '') +
+        'precision highp float;\nprecision highp int;\n';
+    }
+    h += '#define HW_PERFORMANCE ' + (opts.hwPerformance === 0 ? 0 : 1) + '\n';
+    h += 'uniform vec3 iResolution;\nuniform float iTime;\nuniform float iTimeDelta;\nuniform float iFrameRate;\n' +
+      'uniform int iFrame;\nuniform float iChannelTime[4];\nuniform vec3 iChannelResolution[4];\nuniform vec4 iMouse;\n' +
+      'uniform vec4 iDate;\nuniform float iSampleRate;\n' +
+      '// MOLTamp extras: x = activity energy 0..1, y = time speed, z = state code, w = event pulse\nuniform vec4 iMoltamp;\n';
+    for (var c = 0; c < 4; c++) h += 'uniform ' + samplerType(pass.byChannel[c]) + ' iChannel' + c + ';\n';
+    if (isGL2) {
+      h += 'out vec4 st_FragColor;\n';
+    } else {
+      h += 'vec4 texture(sampler2D s, vec2 c) { return texture2D(s, c); }\n' +
+        'vec4 texture(sampler2D s, vec2 c, float b) { return texture2D(s, c, b); }\n' +
+        'vec4 texture(samplerCube s, vec3 c) { return textureCube(s, c); }\n' +
+        (ext.lod ? 'vec4 textureLod(sampler2D s, vec2 c, float l) { return texture2DLodEXT(s, c, l); }\n' : '');
+    }
+    return h;
+  }
+
+  function footer(pass) {
+    var outVar = isGL2 ? 'st_FragColor' : 'gl_FragColor';
+    return '\nvoid main() {\n  vec4 c = vec4(0.0, 0.0, 0.0, 1.0);\n  mainImage(c, gl_FragCoord.xy);\n' +
+      (pass.output === 'image' ? '  c.w = 1.0;\n' : '') + '  ' + outVar + ' = c;\n}\n';
+  }
+
+  function countLines(s) { return s.split('\n').length - 1; }
+
+  var vsObj = gl.createShader(gl.VERTEX_SHADER);
+  gl.shaderSource(vsObj, VS);
+  gl.compileShader(vsObj);
+
+  var compileStart = performance.now();
+  var passes = cfg.passes.map(function (p) {
+    var pass = { name: p.name, output: p.output, inputs: p.inputs || [], byChannel: {} };
+    pass.inputs.forEach(function (inp) { pass.byChannel[inp.channel] = inp; });
+    var head = header(pass) + (cfg.common ? cfg.common + '\n' : '');
+    pass.lineOffset = countLines(head);
+    pass.fs = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(pass.fs, head + p.code + footer(pass));
+    gl.compileShader(pass.fs);
+    pass.prog = gl.createProgram();
+    gl.attachShader(pass.prog, vsObj);
+    gl.attachShader(pass.prog, pass.fs);
+    gl.bindAttribLocation(pass.prog, 0, 'pos');
+    gl.linkProgram(pass.prog);
+    return pass;
+  });
+
+  function remapLog(pass, log) {
+    // Report line numbers relative to the pass source (Common lines included in the offset).
+    return log.replace(/ERROR: 0:(\d+)/g, function (_, n) { return 'line ' + (Number(n) - pass.lineOffset); });
+  }
+
+  function finishLink() {
+    for (var i = 0; i < passes.length; i++) {
+      var p = passes[i];
+      if (!gl.getProgramParameter(p.prog, gl.LINK_STATUS)) {
+        var log = gl.getShaderInfoLog(p.fs) || gl.getProgramInfoLog(p.prog) || 'link failed';
+        fail('[' + p.name + '] ' + remapLog(p, log).slice(0, 600));
+        return false;
+      }
+      p.u = {};
+      ['iResolution', 'iTime', 'iTimeDelta', 'iFrameRate', 'iFrame', 'iMouse', 'iDate', 'iSampleRate', 'iMoltamp'].forEach(function (n) {
+        p.u[n] = gl.getUniformLocation(p.prog, n);
+      });
+      p.u.iChannelTime = gl.getUniformLocation(p.prog, 'iChannelTime');
+      p.u.iChannelResolution = gl.getUniformLocation(p.prog, 'iChannelResolution');
+      p.u.ch = [0, 1, 2, 3].map(function (c) { return gl.getUniformLocation(p.prog, 'iChannel' + c); });
+      p.inputs.forEach(function (inp) {
+        if (inp.kind === 'audio') inp.res = makeAudio();
+        else if (inp.kind === 'gen') inp.res = makeGenerated(inp);
+        else if (inp.kind === 'image') inp.res = makeImage(inp);
+        else if (inp.kind === 'buffer' && inp.filter === 'mipmap') buffers[inp.buffer].wantMips = true;
+      });
+    }
+    debug.compileMs = Math.round(performance.now() - compileStart);
+    return true;
+  }
+
+  // ---------------------------------------------------------------- buffers
+  var buffers = {};
+  passes.forEach(function (p) { if (p.output !== 'image') buffers[p.output] = { pair: null, cur: 0, w: 0, h: 0, wantMips: false }; });
+
+  function ensureBuffers(w, h) {
+    Object.keys(buffers).forEach(function (k) {
+      var b = buffers[k];
+      if (b.w === w && b.h === h) return;
+      if (b.pair) b.pair.forEach(function (t) { gl.deleteTexture(t.tex); gl.deleteFramebuffer(t.fb); });
+      b.pair = [makeTarget(w, h), makeTarget(w, h)];
+      b.cur = 0; b.w = w; b.h = h;
+    });
+  }
+
+  // ---------------------------------------------------------------- geometry
+  var vbo = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+  // ---------------------------------------------------------------- MOLTamp reactivity
+  // Claude's shell state drives the time speed and the energy of the simulated audio spectrum
+  // (widgets get no audio data); terminal throughput adds on top.
+  var STATES = {
+    unknown: { speed: 1.0, energy: 0.5, code: 0 },
+    idle: { speed: 0.35, energy: 0.12, code: 1 },
+    thinking: { speed: 0.8, energy: 0.45, code: 2 },
+    streaming: { speed: 1.25, energy: 0.8, code: 3 },
+    'tool-use': { speed: 1.6, energy: 0.9, code: 4 },
+    permission: { speed: 0.5, energy: 0.35, code: 5 },
+    error: { speed: 0.25, energy: 0.2, code: 6 },
+    complete: { speed: 1.0, energy: 0.6, code: 7 }
+  };
+  var react = { state: 'unknown', since: 0, activity: 'idle', bytes: 0, speed: 1, energy: 0.5, pulse: 0 };
+  var reactive = opts.reactive !== false;
+
+  window.addEventListener('message', function (e) {
+    var d = e.data;
+    if (d && d.type === 'moltamp:push' && d.subscriptionId === 'shell-state' && STATES[d.data]) {
+      react.state = d.data;
+      react.since = performance.now();
+      if (d.data === 'complete' || d.data === 'error' || d.data === 'permission') react.pulse = 1;
+    }
+  });
+
+  if (window.moltamp && moltamp.subscribe) {
+    try { moltamp.subscribe('telemetry', 'activity', function (v) { react.activity = v || 'idle'; }); } catch (e) { /* store missing */ }
+    try { moltamp.subscribe('telemetry', 'bytesPerSec', function (v) { react.bytes = Number(v) || 0; }); } catch (e) { /* store missing */ }
+  }
+
+  function updateReactivity(now, dt) {
+    var name = react.state;
+    // "complete" is a transient state: fall back to idle after a few seconds.
+    if (name === 'complete' && now - react.since > 4000) name = react.state = 'idle';
+    var s = STATES[name] || STATES.unknown;
+    var act = react.activity === 'high' ? 0.35 : react.activity === 'low' ? 0.15 : 0;
+    var bytes = Math.min(0.3, Math.log(1 + react.bytes) / Math.LN10 / 20);
+    var targetSpeed = reactive ? s.speed + act * 0.8 + bytes : 1;
+    var targetEnergy = reactive ? Math.min(1, s.energy + act + bytes) : 0.5;
+    var k = 1 - Math.exp(-dt / 0.6);
+    react.speed += (targetSpeed * (opts.speed || 1) - react.speed) * k;
+    react.energy += (targetEnergy - react.energy) * k;
+    react.pulse *= Math.exp(-dt / 0.5);
+  }
+
+  var fftSmooth = new Float32Array(AUDIO_W);
+  function updateFakeAudio(t) {
+    var e = react.energy, bpm = 70 + 80 * e, ph = (t * bpm / 60) % 1, kick = Math.exp(-ph * 7);
+    for (var i = 0; i < AUDIO_W; i++) {
+      var f = i / AUDIO_W;
+      var base = Math.pow(1 - f, 2.2);
+      var wob = 0.5 + 0.5 * Math.sin(i * 0.37 + t * 3.1) * Math.sin(i * 0.11 - t * 1.7);
+      var v = e * (0.55 * base + 0.3 * wob * (1 - 0.6 * f));
+      if (f < 0.06) v += kick * e * 0.9 * (1 - f / 0.06);
+      v += react.pulse * 0.4 * base;
+      fftSmooth[i] = fftSmooth[i] * 0.8 + Math.min(1, v) * 0.2;
+      audioData[i] = (fftSmooth[i] * 255) | 0;
+      var w = Math.sin(6.2831853 * f * 4 + t * 8) * 0.6 + Math.sin(6.2831853 * f * 17 + t * 13) * 0.3;
+      audioData[AUDIO_W + i] = 128 + ((w * 127 * e * (0.5 + 0.5 * kick)) | 0);
+    }
+    gl.bindTexture(gl.TEXTURE_2D, audioTex.tex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, AUDIO_W, 2, isGL2 ? gl.RED : gl.LUMINANCE, gl.UNSIGNED_BYTE, audioData);
+  }
+
+  // ---------------------------------------------------------------- mouse (Shadertoy iMouse semantics)
+  var mouse = [0, 0, 0, 0], mouseDown = false, clickFrame = false;
+  function mousePos(e) {
+    var r = canvas.getBoundingClientRect();
+    return [(e.clientX - r.left) * canvas.width / r.width, canvas.height - (e.clientY - r.top) * canvas.height / r.height];
+  }
+  canvas.addEventListener('pointerdown', function (e) {
+    // Left button only, like Shadertoy: right-click and ctrl-click stay with the host (widget context menu).
+    if (e.button !== 0 || e.ctrlKey) return;
+    var p = mousePos(e);
+    mouseDown = true; clickFrame = true;
+    mouse = [p[0], p[1], p[0], p[1]];
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+  });
+  canvas.addEventListener('pointermove', function (e) {
+    if (!mouseDown) return;
+    var p = mousePos(e);
+    mouse[0] = p[0]; mouse[1] = p[1];
+  });
+  function release() { if (mouseDown) { mouseDown = false; mouse[2] = -Math.abs(mouse[2]); } }
+  canvas.addEventListener('pointerup', release);
+  canvas.addEventListener('pointercancel', release);
+
+  // ---------------------------------------------------------------- visibility: skip GPU work when hidden
+  var visible = true;
+  if ('IntersectionObserver' in window) {
+    new IntersectionObserver(function (entries) { visible = entries[entries.length - 1].isIntersecting; }).observe(canvas);
+  }
+  document.addEventListener('visibilitychange', function () { if (document.hidden) visible = false; });
+
+  // ---------------------------------------------------------------- frame loop
+  var simTime = 0, frameNo = 0, lastNow = 0, fpsAcc = 0, fpsFrames = 0, fps = 60, started = false;
+  var chanTime = new Float32Array(4), chanRes = new Float32Array(12);
+
+  function resize() {
+    var dpr = window.devicePixelRatio || 1, scale = opts.scale || 1;
+    var cw = canvas.clientWidth * dpr, ch = canvas.clientHeight * dpr;
+    // Pixel budget keeps heavy raymarchers smooth on Retina or very large panels.
+    var budget = opts.maxPixels || 600000;
+    if (cw * ch * scale * scale > budget) scale = Math.sqrt(budget / (cw * ch));
+    var w = Math.max(1, Math.round(cw * scale));
+    var h = Math.max(1, Math.round(ch * scale));
+    if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; }
+    ensureBuffers(w, h);
+    return [w, h];
+  }
+
+  function bindInputs(pass) {
+    for (var c = 0; c < 4; c++) {
+      var inp = pass.byChannel[c], res = null, target = gl.TEXTURE_2D, hasMips = false;
+      gl.activeTexture(gl.TEXTURE0 + c);
+      chanRes[c * 3] = chanRes[c * 3 + 1] = chanRes[c * 3 + 2] = 0;
+      if (inp) {
+        if (inp.kind === 'buffer') {
+          var b = buffers[inp.buffer];
+          if (b && b.pair) {
+            res = { tex: b.pair[b.cur].tex, target: gl.TEXTURE_2D };
+            hasMips = b.wantMips;
+            chanRes[c * 3] = b.w; chanRes[c * 3 + 1] = b.h; chanRes[c * 3 + 2] = 1;
+          }
+        } else if (inp.res) {
+          res = inp.res; target = res.target; hasMips = res.mips;
+          chanRes[c * 3] = res.w; chanRes[c * 3 + 1] = res.h; chanRes[c * 3 + 2] = res.d;
+        }
+      }
+      if (res) {
+        gl.bindTexture(res.target, res.tex);
+        var filter = inp.filter || 'linear';
+        if (inp.kind === 'buffer' && filter !== 'nearest' && !rtFormat.linear) filter = 'nearest';
+        applySampler(res.target, filter, isGL2 || res.target !== gl.TEXTURE_2D || inp.kind !== 'buffer' ? inp.wrap : 'clamp', hasMips);
+      } else {
+        gl.bindTexture(gl.TEXTURE_2D, null);
+      }
+      gl.uniform1i(pass.u.ch[c], c);
+    }
+  }
+
+  function draw(now) {
+    var dt = lastNow ? Math.min((now - lastNow) / 1000, 0.1) : 1 / 60;
+    lastNow = now;
+    fpsAcc += dt; fpsFrames++;
+    if (fpsAcc > 0.5) { fps = fpsFrames / fpsAcc; fpsAcc = 0; fpsFrames = 0; debug.fps = Math.round(fps); }
+
+    updateReactivity(now, dt);
+    var simDt = dt * react.speed;
+    simTime += simDt;
+    if (audioTex) updateFakeAudio(simTime);
+
+    var size = resize(), w = size[0], h = size[1];
+    var date = new Date();
+    var secs = date.getHours() * 3600 + date.getMinutes() * 60 + date.getSeconds() + date.getMilliseconds() / 1000;
+    for (var c = 0; c < 4; c++) chanTime[c] = simTime;
+    if (!clickFrame) mouse[3] = -Math.abs(mouse[3]);
+
+    for (var i = 0; i < passes.length; i++) {
+      var p = passes[i], target = null, b = null;
+      if (p.output !== 'image') { b = buffers[p.output]; target = b.pair[1 - b.cur]; }
+      gl.bindFramebuffer(gl.FRAMEBUFFER, target ? target.fb : null);
+      gl.viewport(0, 0, w, h);
+      gl.useProgram(p.prog);
+      bindInputs(p);
+      gl.uniform3f(p.u.iResolution, w, h, 1);
+      gl.uniform1f(p.u.iTime, simTime);
+      gl.uniform1f(p.u.iTimeDelta, simDt);
+      gl.uniform1f(p.u.iFrameRate, fps);
+      gl.uniform1i(p.u.iFrame, frameNo);
+      gl.uniform4f(p.u.iMouse, mouse[0], mouse[1], mouse[2], mouse[3]);
+      gl.uniform4f(p.u.iDate, date.getFullYear(), date.getMonth(), date.getDate(), secs);
+      gl.uniform1f(p.u.iSampleRate, 44100);
+      gl.uniform4f(p.u.iMoltamp, react.energy, react.speed, (STATES[react.state] || STATES.unknown).code, react.pulse);
+      if (p.u.iChannelTime) gl.uniform1fv(p.u.iChannelTime, chanTime);
+      if (p.u.iChannelResolution) gl.uniform3fv(p.u.iChannelResolution, chanRes);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      if (b) {
+        b.cur = 1 - b.cur;
+        if (b.wantMips) { gl.bindTexture(gl.TEXTURE_2D, b.pair[b.cur].tex); gl.generateMipmap(gl.TEXTURE_2D); }
+      }
+    }
+    clickFrame = false;
+    frameNo++;
+    debug.frame = frameNo;
+  }
+
+  var lastDraw = 0;
+  function loop(now) {
+    requestAnimationFrame(loop);
+    if (!started) {
+      if (ext.parallel && !passes.every(function (p) { return gl.getProgramParameter(p.prog, ext.parallel.COMPLETION_STATUS_KHR); })) return;
+      started = true;
+      if (!finishLink()) { started = 'failed'; return; }
+      debug.ready = true;
+    }
+    if (started !== true || !visible) { lastNow = 0; return; }
+    var cap = opts.fpsCap || 60;
+    if (now - lastDraw < 1000 / cap - 2) return;
+    lastDraw = now;
+    draw(now);
+  }
+
+  // Per-widget overrides persisted with moltamp.settings: { scale, maxPixels, fpsCap, speed, reactive }.
+  (function () {
+    if (!window.moltamp || !moltamp.settings) { requestAnimationFrame(loop); return; }
+    moltamp.settings.read().then(function (saved) {
+      saved = saved || {};
+      ['scale', 'maxPixels', 'fpsCap', 'speed', 'reactive'].forEach(function (k) { if (saved[k] !== undefined) opts[k] = saved[k]; });
+      reactive = opts.reactive !== false;
+    }).catch(function () { /* first run: no settings yet */ }).then(function () { requestAnimationFrame(loop); });
+  })();
+})();
+
+</script>

@@ -1,0 +1,17 @@
+{
+  "id": "st-mondrian-hexagon",
+  "name": "Mondrian Hexagons",
+  "version": "1.0.0",
+  "description": "Mondrian hexagons that split and merge in an endless zoom. By David Braun.",
+  "author": "DavidBraun (port: j0j0)",
+  "category": "Shaders",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "telemetry.activity",
+      "telemetry.bytesPerSec"
+    ]
+  }
+}

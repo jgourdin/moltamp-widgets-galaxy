@@ -1,0 +1,17 @@
+{
+  "id": "st-sound-candy",
+  "name": "Sound Candy",
+  "version": "1.0.0",
+  "description": "Neon hexagon rings repeating to the rhythm of Claude's activity. By Pink.",
+  "author": "Pink (port: j0j0)",
+  "category": "Shaders",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "telemetry.activity",
+      "telemetry.bytesPerSec"
+    ]
+  }
+}

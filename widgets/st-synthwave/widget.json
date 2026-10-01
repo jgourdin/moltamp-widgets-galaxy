@@ -1,0 +1,17 @@
+{
+  "id": "st-synthwave",
+  "name": "Synthwave Sunset",
+  "version": "1.0.0",
+  "description": "Endless synthwave terrain under a striped retro sun. By axiomgraph.",
+  "author": "axiomgraph (port: j0j0)",
+  "category": "Shaders",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "telemetry.activity",
+      "telemetry.bytesPerSec"
+    ]
+  }
+}

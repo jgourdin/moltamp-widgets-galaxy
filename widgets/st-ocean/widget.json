@@ -1,0 +1,17 @@
+{
+  "id": "st-ocean",
+  "name": "Open Ocean",
+  "version": "1.0.0",
+  "description": "Fast procedural ocean under a low sun; drag to look around. By afl_ext.",
+  "author": "afl_ext (port: j0j0)",
+  "category": "Shaders",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "telemetry.activity",
+      "telemetry.bytesPerSec"
+    ]
+  }
+}

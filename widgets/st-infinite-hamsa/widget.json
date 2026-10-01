@@ -1,0 +1,17 @@
+{
+  "id": "st-infinite-hamsa",
+  "name": "Infinite Hamsa",
+  "version": "1.0.0",
+  "description": "Infinite spiral of hamsa hands and watchful eyes. By noztol.",
+  "author": "noztol (port: j0j0)",
+  "category": "Shaders",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "telemetry.activity",
+      "telemetry.bytesPerSec"
+    ]
+  }
+}

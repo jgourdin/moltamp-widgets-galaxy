@@ -1,0 +1,17 @@
+{
+  "id": "st-coral-reef",
+  "name": "Coral Reef",
+  "version": "1.0.0",
+  "description": "Swirling tunnel of glowing fractal coral. By Yusef28.",
+  "author": "Yusef28 (port: j0j0)",
+  "category": "Shaders",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "telemetry.activity",
+      "telemetry.bytesPerSec"
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "id": "st-jupiter-io",
+  "name": "Jupiter & Io",
+  "version": "1.0.0",
+  "description": "Jupiter's churning bands with Io passing by; best in a wide slot. By edziewanowski.",
+  "author": "edziewanowski (port: j0j0)",
+  "category": "Shaders",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "telemetry.activity",
+      "telemetry.bytesPerSec"
+    ]
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "id": "st-warp-fbm",
+  "name": "Liquid Warp",
+  "version": "1.0.0",
+  "description": "Domain-warped fBM flowing like ink, faster while Claude is busy. By trinketMage.",
+  "author": "trinketMage (port: j0j0)",
+  "category": "Shaders",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "telemetry.activity",
+      "telemetry.bytesPerSec"
+    ]
+  }
+}

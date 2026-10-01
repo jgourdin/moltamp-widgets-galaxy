@@ -1,0 +1,17 @@
+{
+  "id": "st-spectralizer",
+  "name": "Spectralizer",
+  "version": "1.0.0",
+  "description": "Volumetric smoke sculpted by a spectrum that swells while Claude works. By chronos.",
+  "author": "chronos (port: j0j0)",
+  "category": "Shaders",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "telemetry.activity",
+      "telemetry.bytesPerSec"
+    ]
+  }
+}

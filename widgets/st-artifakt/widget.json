@@ -1,0 +1,17 @@
+{
+  "id": "st-artifakt",
+  "name": "Artifakt Cubes",
+  "version": "1.0.0",
+  "description": "Wireframe voxel cubes carved with glowing glyphs. By incre_ment.",
+  "author": "incre_ment (port: j0j0)",
+  "category": "Shaders",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "telemetry.activity",
+      "telemetry.bytesPerSec"
+    ]
+  }
+}

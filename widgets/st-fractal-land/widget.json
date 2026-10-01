@@ -1,0 +1,17 @@
+{
+  "id": "st-fractal-land",
+  "name": "Fractal Land",
+  "version": "1.0.0",
+  "description": "Cartoon flight over an endless fractal landscape. By Kali.",
+  "author": "Kali (port: j0j0)",
+  "category": "Shaders",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "telemetry.activity",
+      "telemetry.bytesPerSec"
+    ]
+  }
+}

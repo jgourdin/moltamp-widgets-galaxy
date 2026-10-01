@@ -1,0 +1,17 @@
+{
+  "id": "st-fibonacci-zoom",
+  "name": "Fibonacci Zoom",
+  "version": "1.0.0",
+  "description": "Endless zoom over extruded metal tiles laid on a golden spiral. By Shane.",
+  "author": "Shane (port: j0j0)",
+  "category": "Shaders",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "telemetry.activity",
+      "telemetry.bytesPerSec"
+    ]
+  }
+}

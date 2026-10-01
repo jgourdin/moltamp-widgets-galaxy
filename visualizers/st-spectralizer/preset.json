@@ -1,0 +1,8 @@
+{
+  "id": "st-spectralizer",
+  "name": "Spectralizer",
+  "description": "Volumetric smoke sculpted by your music's spectrum, in skin colours. By chronos.",
+  "author": "chronos (port: j0j0)",
+  "version": "1.0.0",
+  "dataType": "both"
+}
