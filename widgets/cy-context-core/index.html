@@ -168,12 +168,17 @@ var CK = (function () {
   }
 
   // ------------------------------------------------------------------ canvas + loop
-  var visible = true;
+  // Paused while off screen (hidden tab) or while the whole page is hidden; both must clear to resume.
+  var onScreen = true, pageVisible = !document.hidden, watching = false;
+  function visibleNow() { return onScreen && pageVisible; }
   function watch(el) {
     if ('IntersectionObserver' in window) {
-      new IntersectionObserver(function (entries) { visible = entries[entries.length - 1].isIntersecting; }).observe(el);
+      new IntersectionObserver(function (entries) { onScreen = entries[entries.length - 1].isIntersecting; }).observe(el);
     }
-    document.addEventListener('visibilitychange', function () { visible = !document.hidden; });
+    if (!watching) {
+      watching = true;
+      document.addEventListener('visibilitychange', function () { pageVisible = !document.hidden; });
+    }
   }
 
   function surface(el) {
@@ -198,7 +203,7 @@ var CK = (function () {
     var last = 0, lastDraw = 0, logged = false, cap = fpsCap || 60;
     function frame(now) {
       requestAnimationFrame(frame);
-      if (!visible) { last = 0; return; }
+      if (!visibleNow()) { last = 0; return; }
       if (now - lastDraw < 1000 / cap - 2) return;
       var dt = last ? Math.min((now - last) / 1000, 0.1) : 1 / 60;
       last = lastDraw = now;
@@ -250,7 +255,7 @@ var CK = (function () {
     poll: poll, subscribe: subscribe, call: call, font: font,
     state: currentState, stateInfo: state, onState: function (cb) { stateListeners.push(cb); },
     telemetry: telemetry, telemetryLevel: telemetryLevel,
-    surface: surface, loop: loop, resetCtx: resetCtx, isVisible: function () { return visible; },
+    surface: surface, loop: loop, resetCtx: resetCtx, isVisible: visibleNow,
     hash: hash, prng: prng, fmtBytes: fmtBytes,
     meta: (hasSdk && moltamp.meta) || { context: 'panel' }
   };

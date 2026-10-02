@@ -47,18 +47,23 @@
   if (!gl) { fail('WebGL unavailable in this widget'); return; }
   debug.context = isGL2 ? 'webgl2' : 'webgl1';
 
+  // Extensions must be enabled again after a context restore.
   var ext = {};
-  if (isGL2) {
-    ext.cbf = gl.getExtension('EXT_color_buffer_float');
-    ext.cbhf = gl.getExtension('EXT_color_buffer_half_float');
-    ext.fl = gl.getExtension('OES_texture_float_linear');
-  } else {
-    ext.deriv = gl.getExtension('OES_standard_derivatives');
-    ext.lod = gl.getExtension('EXT_shader_texture_lod');
-    ext.tf = gl.getExtension('OES_texture_float');
-    ext.cbf = gl.getExtension('WEBGL_color_buffer_float');
+  function enableExtensions() {
+    ext = {};
+    if (isGL2) {
+      ext.cbf = gl.getExtension('EXT_color_buffer_float');
+      ext.cbhf = gl.getExtension('EXT_color_buffer_half_float');
+      ext.fl = gl.getExtension('OES_texture_float_linear');
+    } else {
+      ext.deriv = gl.getExtension('OES_standard_derivatives');
+      ext.lod = gl.getExtension('EXT_shader_texture_lod');
+      ext.tf = gl.getExtension('OES_texture_float');
+      ext.cbf = gl.getExtension('WEBGL_color_buffer_float');
+    }
+    ext.parallel = gl.getExtension('KHR_parallel_shader_compile');
   }
-  ext.parallel = gl.getExtension('KHR_parallel_shader_compile');
+  enableExtensions();
 
   // ---------------------------------------------------------------- generated textures
   // Seeded PRNG so generated noise is identical on every load.
@@ -307,7 +312,7 @@
   }
 
   // Render targets: float when the GPU can render to it, like Shadertoy's buffers.
-  var rtFormat = (function () {
+  function pickRtFormat() {
     if (isGL2) {
       if (ext.cbf) return { internal: gl.RGBA32F, format: gl.RGBA, type: gl.FLOAT, linear: !!ext.fl };
       if (ext.cbhf) return { internal: gl.RGBA16F, format: gl.RGBA, type: gl.HALF_FLOAT, linear: true };
@@ -315,7 +320,8 @@
     }
     if (ext.tf && ext.cbf) return { internal: gl.RGBA, format: gl.RGBA, type: gl.FLOAT, linear: !!gl.getExtension('OES_texture_float_linear') };
     return { internal: gl.RGBA, format: gl.RGBA, type: gl.UNSIGNED_BYTE, linear: true };
-  })();
+  }
+  var rtFormat = pickRtFormat();
 
   function makeTarget(w, h) {
     var t = gl.createTexture();
@@ -378,26 +384,28 @@
 
   function countLines(s) { return s.split('\n').length - 1; }
 
-  var vsObj = gl.createShader(gl.VERTEX_SHADER);
-  gl.shaderSource(vsObj, VS);
-  gl.compileShader(vsObj);
-
-  var compileStart = performance.now();
-  var passes = cfg.passes.map(function (p) {
-    var pass = { name: p.name, output: p.output, inputs: p.inputs || [], byChannel: {} };
-    pass.inputs.forEach(function (inp) { pass.byChannel[inp.channel] = inp; });
-    var head = header(pass) + (cfg.common ? cfg.common + '\n' : '');
-    pass.lineOffset = countLines(head);
-    pass.fs = gl.createShader(gl.FRAGMENT_SHADER);
-    gl.shaderSource(pass.fs, head + p.code + footer(pass));
-    gl.compileShader(pass.fs);
-    pass.prog = gl.createProgram();
-    gl.attachShader(pass.prog, vsObj);
-    gl.attachShader(pass.prog, pass.fs);
-    gl.bindAttribLocation(pass.prog, 0, 'pos');
-    gl.linkProgram(pass.prog);
-    return pass;
-  });
+  var vsObj = null, compileStart = 0, passes = [];
+  function compilePrograms() {
+    vsObj = gl.createShader(gl.VERTEX_SHADER);
+    gl.shaderSource(vsObj, VS);
+    gl.compileShader(vsObj);
+    compileStart = performance.now();
+    passes = cfg.passes.map(function (p) {
+      var pass = { name: p.name, output: p.output, inputs: p.inputs || [], byChannel: {} };
+      pass.inputs.forEach(function (inp) { pass.byChannel[inp.channel] = inp; });
+      var head = header(pass) + (cfg.common ? cfg.common + '\n' : '');
+      pass.lineOffset = countLines(head);
+      pass.fs = gl.createShader(gl.FRAGMENT_SHADER);
+      gl.shaderSource(pass.fs, head + p.code + footer(pass));
+      gl.compileShader(pass.fs);
+      pass.prog = gl.createProgram();
+      gl.attachShader(pass.prog, vsObj);
+      gl.attachShader(pass.prog, pass.fs);
+      gl.bindAttribLocation(pass.prog, 0, 'pos');
+      gl.linkProgram(pass.prog);
+      return pass;
+    });
+  }
 
   function remapLog(pass, log) {
     // Report line numbers relative to the pass source (Common lines included in the offset).
@@ -432,7 +440,10 @@
 
   // ---------------------------------------------------------------- buffers
   var buffers = {};
-  passes.forEach(function (p) { if (p.output !== 'image') buffers[p.output] = { pair: null, cur: 0, w: 0, h: 0, wantMips: false }; });
+  function resetBuffers() {
+    buffers = {};
+    passes.forEach(function (p) { if (p.output !== 'image') buffers[p.output] = { pair: null, cur: 0, w: 0, h: 0, wantMips: false }; });
+  }
 
   function ensureBuffers(w, h) {
     Object.keys(buffers).forEach(function (k) {
@@ -445,11 +456,41 @@
   }
 
   // ---------------------------------------------------------------- geometry
-  var vbo = gl.createBuffer();
-  gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-  gl.enableVertexAttribArray(0);
-  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  function setupGeometry() {
+    var vbo = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  }
+
+  // Every GPU resource is built here so a lost context (sleep/wake, GPU reset, too many
+  // contexts) can be rebuilt instead of leaving a frozen frame.
+  var started = false;
+  function buildGL() {
+    genCache = {};
+    audioTex = null;
+    compilePrograms();
+    resetBuffers();
+    setupGeometry();
+    started = false;
+    debug.ready = false;
+  }
+  buildGL();
+
+  var contextLost = false;
+  canvas.addEventListener('webglcontextlost', function (e) {
+    e.preventDefault(); // tells the browser we will restore
+    contextLost = true;
+    debug.contextLosses = (debug.contextLosses || 0) + 1;
+  });
+  canvas.addEventListener('webglcontextrestored', function () {
+    enableExtensions();
+    rtFormat = pickRtFormat();
+    buildGL();
+    contextLost = false;
+    debug.contextRestores = (debug.contextRestores || 0) + 1;
+  });
 
   // ---------------------------------------------------------------- MOLTamp reactivity
   // Claude's shell state drives the time speed and the energy of the simulated audio spectrum
@@ -540,14 +581,17 @@
   canvas.addEventListener('pointercancel', release);
 
   // ---------------------------------------------------------------- visibility: skip GPU work when hidden
-  var visible = true;
+  // Two independent reasons to pause: the widget is off screen, or the whole page is hidden
+  // (window minimised, covered, other Space, screen locked). Resume only when both are clear.
+  var onScreen = true, pageVisible = !document.hidden;
   if ('IntersectionObserver' in window) {
-    new IntersectionObserver(function (entries) { visible = entries[entries.length - 1].isIntersecting; }).observe(canvas);
+    new IntersectionObserver(function (entries) { onScreen = entries[entries.length - 1].isIntersecting; }).observe(canvas);
   }
-  document.addEventListener('visibilitychange', function () { if (document.hidden) visible = false; });
+  document.addEventListener('visibilitychange', function () { pageVisible = !document.hidden; });
+  function isVisible() { return onScreen && pageVisible; }
 
   // ---------------------------------------------------------------- frame loop
-  var simTime = 0, frameNo = 0, lastNow = 0, fpsAcc = 0, fpsFrames = 0, fps = 60, started = false;
+  var simTime = 0, frameNo = 0, lastNow = 0, fpsAcc = 0, fpsFrames = 0, fps = 60;
   var chanTime = new Float32Array(4), chanRes = new Float32Array(12);
 
   function resize() {
@@ -642,13 +686,14 @@
   var lastDraw = 0;
   function loop(now) {
     requestAnimationFrame(loop);
+    if (contextLost || gl.isContextLost()) { lastNow = 0; return; }
     if (!started) {
       if (ext.parallel && !passes.every(function (p) { return gl.getProgramParameter(p.prog, ext.parallel.COMPLETION_STATUS_KHR); })) return;
       started = true;
       if (!finishLink()) { started = 'failed'; return; }
       debug.ready = true;
     }
-    if (started !== true || !visible) { lastNow = 0; return; }
+    if (started !== true || !isVisible()) { lastNow = 0; return; }
     var cap = opts.fpsCap || 60;
     if (now - lastDraw < 1000 / cap - 2) return;
     lastDraw = now;
