@@ -1,0 +1,335 @@
+/* ═══════════════════════════════════════════════════════════════
+   STARSHIP BRIDGE — MOLTamp Widgets Galaxy skin
+   A starship bridge: slate hull panels with amber instrument lights and
+   teal readouts. The whole bridge follows Claude: a scanner sweeps under
+   the main screen while it works, yellow alert when it waits for you,
+   red alert on errors, a green all-clear when the task is done.
+
+   Author: j0j0 · License: MIT (theme.css, skin.json, assets/*)
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Terminal contract ─────────────────────────────────────── */
+  --t-foreground:    #d3dde8;
+  --t-background:    #080c12;
+  --t-cursor:        #ffb347;
+  --t-cursor-accent: #080c12;
+  --t-selection:     rgba(79, 209, 197, 0.25);
+
+  --t-black:   #141c27;
+  --t-red:     #ff5a5a;
+  --t-green:   #6ee7a8;
+  --t-yellow:  #ffd166;
+  --t-blue:    #6aa9ff;
+  --t-magenta: #c792ea;
+  --t-cyan:    #4fd1c5;
+  --t-white:   #c3cfdb;
+
+  --t-bright-black:   #6f8296;
+  --t-bright-red:     #ff8a8a;
+  --t-bright-green:   #a3f2c8;
+  --t-bright-yellow:  #ffe2a1;
+  --t-bright-blue:    #9cc6ff;
+  --t-bright-magenta: #dcb8f2;
+  --t-bright-cyan:    #8be6dd;
+  --t-bright-white:   #f4f8fb;
+
+  /* ── Chrome contract ───────────────────────────────────────── */
+  --c-chrome-bg:     #0b1118;
+  --c-chrome-text:   #b4c3d2;
+  --c-chrome-border: #233244;
+  --c-chrome-accent: #ffb347;
+  --c-chrome-dim:    #7f93a8;
+  --c-chrome-hover:  #142030;
+
+  /* ── Typography & layout ───────────────────────────────────── */
+  --font-terminal: 'SF Mono', 'JetBrains Mono', 'Menlo', monospace;
+  --font-chrome:   'SF Pro Display', 'Inter', -apple-system, sans-serif;
+  --radius:        3px;
+
+  /* ── Built-in effects ──────────────────────────────────────── */
+  --effect-glow:     1;
+  --glow-intensity:  10px;
+  --c-glow:          rgba(255, 179, 71, 0.14);
+
+  /* ── Custom effects (0 = off, 1 = default, 2 = boost) ─────── */
+  --effect-hull-grid:    1;
+  --effect-scanner:      1;
+  --effect-alert-lights: 1;
+  --effect-console-glow: 1;
+
+  /* ── Skin palette ──────────────────────────────────────────── */
+  --skin-amber:        #ffb347;
+  --skin-teal:         #4fd1c5;
+  --skin-alert-red:    #ff5a5a;
+  --skin-alert-yellow: #ffd166;
+  --skin-clear:        #6ee7a8;
+
+  --skin-hull:         #080c12;
+  --skin-panel-bg:     #0b1118;
+  --skin-titlebar-bg:  linear-gradient(90deg, #111a25 0%, #0b1118 50%, #111a25 100%);
+  --skin-statusbar-bg: #090e15;
+  --skin-border:       #233244;
+  --skin-border-soft:  #182433;
+  --skin-track:        #142030;
+  --skin-tab-active:   #ffe2a1;
+
+  --skin-grid: repeating-linear-gradient(0deg, rgba(79, 209, 197, 0.045) 0 1px, transparent 1px 24px),
+               repeating-linear-gradient(90deg, rgba(79, 209, 197, 0.045) 0 1px, transparent 1px 24px);
+  --skin-scanner: linear-gradient(90deg, transparent 0%, rgba(255, 179, 71, 0) 30%, #ffb347 50%, rgba(255, 179, 71, 0) 70%, transparent 100%);
+  --skin-gauge:   linear-gradient(90deg, #4fd1c5 0%, #ffd166 70%, #ffb347 100%);
+
+  --skin-glow-amber:  rgba(255, 179, 71, 0.22);
+  --skin-glow-teal:   rgba(79, 209, 197, 0.2);
+  --skin-glow-red:    rgba(255, 90, 90, 0.38);
+  --skin-glow-yellow: rgba(255, 209, 102, 0.3);
+  --skin-glow-clear:  rgba(110, 231, 168, 0.32);
+  --skin-glow-none:   rgba(255, 179, 71, 0);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SHELL & TITLE BAR
+   ═══════════════════════════════════════════════════════════════ */
+
+.moltamp-shell {
+  background: var(--skin-hull);
+}
+
+.moltamp-titlebar {
+  background: var(--skin-titlebar-bg);
+  border-bottom: 1px solid var(--skin-border);
+  transition: border-color 0.3s ease;
+}
+
+.moltamp-titlebar > span:first-child {
+  color: var(--skin-amber);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+}
+
+/* Alert conditions show on the title bar edge (system signal, not gated). */
+[data-shell-state="permission"] .moltamp-titlebar {
+  border-bottom-color: var(--skin-alert-yellow);
+}
+
+[data-shell-state="error"] .moltamp-titlebar {
+  border-bottom-color: var(--skin-alert-red);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   VIBES — the main screen; a scanner sweeps under it while Claude works
+   ═══════════════════════════════════════════════════════════════ */
+
+.moltamp-vibes {
+  position: relative;
+  border-bottom: 1px solid var(--skin-border);
+}
+
+.moltamp-vibes::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--skin-scanner);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  opacity: calc(0.35 * var(--effect-scanner));
+  animation: bridge-scan 9s ease-in-out infinite;
+  pointer-events: none;
+}
+
+[data-shell-state="thinking"] .moltamp-vibes::after,
+[data-shell-state="streaming"] .moltamp-vibes::after,
+[data-shell-state="tool-use"] .moltamp-vibes::after {
+  opacity: calc(0.9 * var(--effect-scanner));
+  animation-duration: 2.2s;
+}
+
+@keyframes bridge-scan {
+  0%, 100% { background-position: -40% 0; }
+  50%      { background-position: 140% 0; }
+}
+
+[data-activity="high"] .moltamp-vibes {
+  box-shadow: inset 0 0 calc(20px * var(--effect-console-glow)) var(--skin-glow-amber);
+}
+
+[data-shell-state="error"] .moltamp-vibes {
+  box-shadow: inset 0 0 26px var(--skin-glow-red);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   PANELS — hull plating with a faint instrument grid
+   ═══════════════════════════════════════════════════════════════ */
+
+.moltamp-panel-left,
+.moltamp-panel-right,
+.moltamp-panel-bottom {
+  position: relative;
+  isolation: isolate;
+  background: var(--skin-panel-bg);
+}
+
+.moltamp-panel-left {
+  border-right: 1px solid var(--skin-border);
+}
+
+.moltamp-panel-right {
+  border-left: 1px solid var(--skin-border);
+}
+
+.moltamp-panel-bottom {
+  border-top: 1px solid var(--skin-border);
+}
+
+.moltamp-panel-left::before,
+.moltamp-panel-right::before,
+.moltamp-panel-bottom::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--skin-grid);
+  opacity: var(--effect-hull-grid);
+  pointer-events: none;
+}
+
+/* Alert lights: the side consoles pulse yellow while Claude waits for you, red on errors. */
+.moltamp-panel-left::after,
+.moltamp-panel-right::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  opacity: 0;
+  pointer-events: none;
+}
+
+[data-shell-state="permission"] .moltamp-panel-left::after,
+[data-shell-state="permission"] .moltamp-panel-right::after {
+  box-shadow: inset 0 0 calc(22px * var(--effect-alert-lights)) var(--skin-glow-yellow);
+  animation: bridge-alert 2.4s ease-in-out infinite;
+}
+
+[data-shell-state="error"] .moltamp-panel-left::after,
+[data-shell-state="error"] .moltamp-panel-right::after {
+  box-shadow: inset 0 0 calc(28px * var(--effect-alert-lights)) var(--skin-glow-red);
+  animation: bridge-alert 0.9s ease-in-out infinite;
+}
+
+@keyframes bridge-alert {
+  0%, 100% { opacity: 0; }
+  50%      { opacity: var(--effect-alert-lights); }
+}
+
+[data-activity="high"] .moltamp-panel-right {
+  box-shadow: inset 0 0 calc(12px * var(--effect-console-glow)) var(--skin-glow-teal);
+}
+
+.moltamp-statusbar {
+  background: var(--skin-statusbar-bg);
+  border-top: 1px solid var(--skin-border-soft);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TERMINAL — the console border follows Claude's state
+   ═══════════════════════════════════════════════════════════════ */
+
+.moltamp-terminal {
+  border: 1px solid var(--skin-border-soft);
+  border-radius: var(--radius);
+  transition: border-color 0.3s ease;
+}
+
+[data-shell-state="thinking"] .moltamp-terminal,
+[data-shell-state="streaming"] .moltamp-terminal {
+  border-color: var(--skin-teal);
+}
+
+[data-shell-state="tool-use"] .moltamp-terminal {
+  border-color: var(--skin-amber);
+}
+
+[data-shell-state="permission"] .moltamp-terminal {
+  border-color: var(--skin-alert-yellow);
+}
+
+[data-shell-state="error"] .moltamp-terminal {
+  border-color: var(--skin-alert-red);
+}
+
+/* All clear: one green flash when the task is done. */
+[data-shell-state="complete"] .moltamp-terminal {
+  animation: bridge-clear 1.3s ease-out 1;
+}
+
+@keyframes bridge-clear {
+  0%   { box-shadow: 0 0 calc(18px * var(--effect-console-glow)) var(--skin-glow-clear); }
+  100% { box-shadow: 0 0 0 var(--skin-glow-none); }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TABS
+   ═══════════════════════════════════════════════════════════════ */
+
+.moltamp-tabbar {
+  border-bottom: 1px solid var(--skin-border-soft);
+}
+
+.moltamp-tab {
+  color: var(--c-chrome-dim);
+  letter-spacing: 0.08em;
+  transition: color 0.2s ease, background-color 0.2s ease;
+}
+
+.moltamp-tab:hover {
+  color: var(--c-chrome-text);
+  background-color: var(--c-chrome-hover);
+}
+
+.moltamp-tab-active {
+  color: var(--skin-tab-active);
+  border-bottom: 2px solid var(--skin-amber);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   STATS & GAUGES
+   ═══════════════════════════════════════════════════════════════ */
+
+.moltamp-model-badge {
+  color: var(--skin-amber);
+  letter-spacing: 0.08em;
+}
+
+.moltamp-context-track {
+  background: var(--skin-track);
+  border-radius: var(--radius);
+}
+
+.moltamp-context-fill {
+  background: var(--skin-gauge);
+  border-radius: var(--radius);
+}
+
+.moltamp-context-value {
+  color: var(--skin-teal);
+}
+
+.moltamp-stat-label {
+  color: var(--c-chrome-dim);
+}
+
+.moltamp-stat-value {
+  color: var(--t-foreground);
+}
+
+.moltamp-stat-cost .moltamp-stat-value {
+  color: var(--skin-amber);
+}
+
+.moltamp-stat-rate-5h .moltamp-stat-value,
+.moltamp-stat-rate-7d .moltamp-stat-value {
+  color: var(--skin-teal);
+}

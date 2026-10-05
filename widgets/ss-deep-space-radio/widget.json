@@ -1,0 +1,18 @@
+{
+  "id": "ss-deep-space-radio",
+  "name": "Deep Space Radio",
+  "version": "1.0.0",
+  "description": "A generative ambient space soundtrack that follows Claude: slow pads while it rests, soft bells while it thinks, an arpeggio while it writes, gentle percussion and tool accents while it works, a polite chime when it needs you. Everything is synthesized live, nothing is downloaded. MOLTamp's visualizers hear it too, so the whole galaxy dances to Claude's music. Click to tune in or switch off, scroll to set the volume.",
+  "author": "j0j0",
+  "category": "Starship",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "audio": true,
+    "shellState": true,
+    "stores": [
+      "event.events",
+      "event.eventCount"
+    ]
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "id": "starship-bridge",
+  "name": "Starship Bridge",
+  "version": "1.0.0",
+  "author": "j0j0",
+  "description": "A starship bridge: slate hull panels, amber instrument lights and teal readouts. A scanner sweeps under the main screen while Claude works, the consoles go to yellow alert when it waits for you and red alert on errors. Made for the Starship pack of the MOLTamp Widgets Galaxy.",
+  "engine": "1.0",
+  "tags": ["dark", "sci-fi", "space", "amber", "intense"],
+  "effects": {
+    "glow": true,
+    "hull-grid": { "label": "Hull Grid", "description": "Faint instrument grid on the panels" },
+    "scanner": { "label": "Scanner", "description": "Amber scanner sweeping under the main screen, faster while Claude works" },
+    "alert-lights": { "label": "Alert Lights", "description": "Side consoles pulse yellow while Claude waits for you, red on errors" },
+    "console-glow": { "label": "Console Glow", "description": "Panel glow on high activity and a green all-clear when a task is done" }
+  },
+  "vibes": {
+    "slots": [
+      { "widgetId": "gif", "gifSrc": "assets/vibes.gif", "gifFit": "cover" }
+    ]
+  },
+  "defaultLayout": {
+    "tabAssignments": {
+      "intel": ["events", "files", "agents", "git"],
+      "signal": ["custom-1", "custom-2", "custom-3", "custom-4"]
+    },
+    "tabVisibility": {
+      "events": true,
+      "files": true,
+      "agents": true,
+      "git": true,
+      "custom-1": true,
+      "custom-2": true,
+      "custom-3": true,
+      "custom-4": true
+    },
+    "customTabs": {
+      "custom-1": { "label": "HELM", "widgets": ["usage-model", "usage-context", "usage-rates", "user-cyberpunk-cy-context-core"] },
+      "custom-2": { "label": "SCIENCE", "widgets": ["user-starship-ss-codebase-cosmos", "user-starship-ss-agent-fleet"] },
+      "custom-3": { "label": "LOG", "widgets": ["user-starship-ss-planet-log", "user-starship-ss-year-in-space"] },
+      "custom-4": { "label": "COMMS", "widgets": ["user-starship-ss-deep-space-radio", "music", "visualizer"] }
+    },
+    "dimensions": {
+      "leftWidth": 250,
+      "rightWidth": 240,
+      "vibesHeight": 200,
+      "bottomHeight": 26,
+      "panelScale": 1,
+      "terminalScale": 1
+    },
+    "panelVisibility": {
+      "showVibes": true,
+      "showLeft": true,
+      "showRight": true,
+      "showBottom": true
+    },
+    "vibesDeck": {
+      "slots": [
+        { "widgetId": "user-starship-ss-viewscreen" },
+        { "widgetId": "user-starship-ss-event-horizon" },
+        { "widgetId": "visualizer" }
+      ],
+      "widths": [50, 25, 25]
+    },
+    "visualizerPreset": "gx-audio-galaxy"
+  }
+}

@@ -20,9 +20,11 @@ Third-party code included as-is in these shaders: Stefan Gustavson's "cnoise" no
 - `widgets/cy-*` — the Cyberpunk District widgets, Copyright (c) 2026 j0j0.
 - `widgets/mc-*` — the Mission Control widgets, Copyright (c) 2026 j0j0.
 - `widgets/nl-*` — the Night Lounge widgets, Copyright (c) 2026 j0j0.
+- `widgets/ss-*` — the Starship widgets, Copyright (c) 2026 j0j0.
 - `visualizers/gx-audio-galaxy` — the Audio Galaxy visualizer, Copyright (c) 2026 j0j0.
 - `skins/widgets-galaxy` — the Galaxy skin, Copyright (c) 2026 j0j0, **except** `assets/vibes.gif`: it shows six of
   the Shadertoy ports in motion, so that file is CC BY-NC-SA 3.0 (the six shaders are credited in the skin's `theme.css`).
+- `skins/starship-bridge` — the Starship Bridge skin, Copyright (c) 2026 j0j0.
 - `widgets/st-ocean` — "Very fast procedural ocean", Copyright (c) 2017-2024 afl_ext.
 - `widgets/st-mondrian-hexagon` — "Mondrian Hexagon Infinity", Copyright (c) 2026 David Braun.
 - The runner code (WebGL host, passes, Claude reactivity) and `widgets/shadertoy-runner`, Copyright (c) 2026 j0j0.

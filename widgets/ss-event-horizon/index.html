@@ -1,0 +1,713 @@
+<!--
+  Event Horizon — Starship pack for MOLTamp
+  A black hole that swells with Claude's context: the event horizon grows as the context window fills, the accretion disk burns hotter with every token, and a compaction releases a flash of Hawking radiation. Drag sideways to tilt the disk.
+  Author: j0j0 · License: MIT
+-->
+<div id="cy-root"><canvas id="cy-canvas"></canvas><div id="cy-label"></div></div>
+
+<style>
+  #cy-root { position: absolute; inset: 0; overflow: hidden; background: var(--c-chrome-bg); container-type: size; }
+  #cy-canvas { display: block; width: 100%; height: 100%; }
+  #cy-label {
+    position: absolute; left: 8px; bottom: 6px; pointer-events: none; letter-spacing: 0.08em;
+    color: var(--c-chrome-dim); text-shadow: 0 0 6px var(--c-chrome-bg);
+    font: calc(clamp(8px, 3.4cqw, 12px) * var(--user-text-scale, 1)) 'SF Mono', Menlo, 'Hiragino Sans', monospace;
+  }
+</style>
+
+<script>
+// cyber-kit — shared runtime of the Cyberpunk widget pack (MIT, j0j0).
+// Skin colours resolved for canvas use, DPR-aware canvas, pause when hidden, Claude state, telemetry.
+var CK = (function () {
+  'use strict';
+
+  var hasSdk = typeof window.moltamp !== 'undefined';
+
+  // ------------------------------------------------------------------ skin colours
+  var VARS = {
+    bg: '--c-chrome-bg', text: '--c-chrome-text', accent: '--c-chrome-accent', dim: '--c-chrome-dim',
+    border: '--c-chrome-border', fg: '--t-foreground', termBg: '--t-background', red: '--t-red',
+    green: '--t-green', yellow: '--t-yellow', blue: '--t-blue', cyan: '--t-cyan', magenta: '--t-magenta'
+  };
+  // A colour missing from the skin borrows another skin colour, never a hardcoded value.
+  var BORROW = {
+    text: ['fg', 'accent'], fg: ['text', 'accent'], accent: ['text', 'fg'], dim: ['text', 'fg'], border: ['dim', 'text'],
+    bg: ['termBg'], termBg: ['bg'], red: ['magenta', 'accent'], green: ['cyan', 'accent'], yellow: ['accent', 'red'],
+    blue: ['cyan', 'accent'], cyan: ['blue', 'accent'], magenta: ['red', 'accent']
+  };
+  var probeEl = document.createElement('span');
+  probeEl.style.display = 'none';
+  (document.body || document.documentElement).appendChild(probeEl);
+  var pc = document.createElement('canvas');
+  pc.width = pc.height = 1;
+  var pctx = pc.getContext('2d', { willReadFrequently: true });
+  var rgb = {};
+  var c = {};
+
+  // Resolves any CSS colour the skin may use (hex, rgb, var(), color-mix()) to RGB bytes.
+  function readVar(name) {
+    var raw = getComputedStyle(document.documentElement).getPropertyValue(VARS[name]).trim();
+    if (!raw) return null;
+    probeEl.style.color = '';
+    probeEl.style.color = raw;
+    var computed = getComputedStyle(probeEl).color;
+    pctx.fillStyle = '#010203';
+    pctx.fillStyle = computed;
+    if (pctx.fillStyle === '#010203' && computed !== 'rgb(1, 2, 3)') return null;
+    pctx.clearRect(0, 0, 1, 1);
+    pctx.fillRect(0, 0, 1, 1);
+    var d = pctx.getImageData(0, 0, 1, 1).data;
+    return [d[0], d[1], d[2]];
+  }
+
+  function refreshColors() {
+    var name, raw = {};
+    for (name in VARS) raw[name] = readVar(name);
+    for (name in VARS) {
+      var v = raw[name], chain = BORROW[name] || [];
+      for (var i = 0; !v && i < chain.length; i++) v = raw[chain[i]];
+      if (!v) {
+        // Last resort: the host's own text colour, still a skin value.
+        probeEl.style.color = '';
+        var m = /(\d+)\D+(\d+)\D+(\d+)/.exec(getComputedStyle(document.body || document.documentElement).color) || [0, 128, 128, 128];
+        v = [+m[1], +m[2], +m[3]];
+      }
+      rgb[name] = v;
+      c[name] = 'rgb(' + v[0] + ',' + v[1] + ',' + v[2] + ')';
+    }
+  }
+  refreshColors();
+
+  function rgba(name, a) {
+    var v = rgb[name] || rgb.text;
+    return 'rgba(' + v[0] + ',' + v[1] + ',' + v[2] + ',' + a + ')';
+  }
+
+  function mix(a, b, t, alpha) {
+    var x = rgb[a] || rgb.text, y = rgb[b] || rgb.text;
+    var r = Math.round(x[0] + (y[0] - x[0]) * t), g = Math.round(x[1] + (y[1] - x[1]) * t), bl = Math.round(x[2] + (y[2] - x[2]) * t);
+    return alpha === undefined ? 'rgb(' + r + ',' + g + ',' + bl + ')' : 'rgba(' + r + ',' + g + ',' + bl + ',' + alpha + ')';
+  }
+
+  function lum(name) {
+    var v = rgb[name] || rgb.text;
+    return (0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]) / 255;
+  }
+
+  // ------------------------------------------------------------------ sdk wrappers
+  // moltamp.poll only: it cleans itself up when the widget unloads (store rule: no raw setInterval).
+  function poll(ms, fn) {
+    if (hasSdk && moltamp.poll) return moltamp.poll(ms, fn);
+    return function () {};
+  }
+
+  function subscribe(store, selector, cb) {
+    if (!hasSdk || !moltamp.subscribe) return function () {};
+    try { return moltamp.subscribe(store, selector, cb) || function () {}; } catch (e) { return function () {}; }
+  }
+
+  function call(channel) {
+    if (!hasSdk || !moltamp.call) return Promise.reject(new Error('no sdk'));
+    try { return Promise.resolve(moltamp.call.apply(moltamp, arguments)); } catch (e) { return Promise.reject(e); }
+  }
+
+  // ------------------------------------------------------------------ text scale (Settings > Display)
+  var textScale = 1;
+  if (hasSdk && moltamp.settings) {
+    moltamp.settings.read().then(function (cfg) {
+      cfg = cfg || {};
+      if (typeof cfg.widgetTextScale === 'number') textScale = cfg.widgetTextScale;
+      document.documentElement.style.setProperty('--user-text-scale', String(textScale));
+    }).catch(function () { /* first run: no settings */ });
+  }
+
+  function font(size, weight) {
+    return (weight || 'normal') + ' ' + Math.max(7, size * textScale).toFixed(1) +
+      'px "SF Mono", Menlo, "Hiragino Sans", "Hiragino Kaku Gothic ProN", monospace';
+  }
+
+  // ------------------------------------------------------------------ Claude shell state
+  var STATES = ['idle', 'thinking', 'streaming', 'tool-use', 'permission', 'error', 'complete'];
+  var state = { name: 'idle', since: performance.now(), seen: false };
+  var stateListeners = [];
+  window.addEventListener('message', function (e) {
+    var d = e.data;
+    if (!d || d.type !== 'moltamp:push' || d.subscriptionId !== 'shell-state' || STATES.indexOf(d.data) < 0) return;
+    var prev = state.name;
+    state.name = d.data;
+    state.since = performance.now();
+    state.seen = true;
+    for (var i = 0; i < stateListeners.length; i++) {
+      try { stateListeners[i](state.name, prev); } catch (err) { /* keep other listeners alive */ }
+    }
+  });
+
+  function currentState() {
+    // "complete" is a moment, not a mode: fall back to idle after a few seconds.
+    if (state.name === 'complete' && performance.now() - state.since > 4000) return 'idle';
+    return state.name;
+  }
+
+  // ------------------------------------------------------------------ terminal telemetry
+  var tel = { bytes: 0, activity: 'idle', level: 0, started: false };
+  function telemetry() {
+    if (!tel.started) {
+      tel.started = true;
+      subscribe('telemetry', 'bytesPerSec', function (v) { tel.bytes = Number(v) || 0; });
+      subscribe('telemetry', 'activity', function (v) { tel.activity = v || 'idle'; });
+    }
+    return tel;
+  }
+
+  // 0..1 terminal energy, log-scaled bytes plus the activity level, smoothed by the caller's dt.
+  function telemetryLevel(dt) {
+    var target = Math.min(1, Math.log(1 + tel.bytes) / Math.log(1 + 200000)) * 0.75 +
+      (tel.activity === 'high' ? 0.35 : tel.activity === 'low' ? 0.15 : 0);
+    tel.level += (Math.min(1, target) - tel.level) * (1 - Math.exp(-(dt || 0.016) / 0.5));
+    return tel.level;
+  }
+
+  // ------------------------------------------------------------------ Claude Code hook events
+  // event.events is a ring buffer of the last ~200 hook payloads from every session; callers only
+  // want what is new, so entries are de-duplicated by timestamp, hook, tool and session.
+  var evSeen = {}, evQueue = [], evListeners = [], evStarted = false;
+  function eventKey(e) { return [e._ts, e._hook || e.hook_event_name, e.tool_name, e._session || e.session_id].join('|'); }
+  function onEvents(cb) {
+    evListeners.push(cb);
+    if (evStarted) return;
+    evStarted = true;
+    var first = true;
+    subscribe('event', 'events', function (v) {
+      var list = Array.isArray(v) ? v : v && typeof v === 'object' ? Object.keys(v).map(function (k) { return v[k]; }) : [];
+      var fresh = [];
+      for (var i = 0; i < list.length; i++) {
+        var e = list[i];
+        if (!e || typeof e !== 'object') continue;
+        var k = eventKey(e);
+        if (evSeen[k]) continue;
+        evSeen[k] = true;
+        evQueue.push(k);
+        fresh.push(e);
+      }
+      while (evQueue.length > 800) delete evSeen[evQueue.shift()];
+      var history = first;
+      first = false;
+      if (fresh.length) for (var j = 0; j < evListeners.length; j++) {
+        try { evListeners[j](fresh, history); } catch (err) { /* keep other listeners alive */ }
+      }
+    });
+  }
+
+  // A failure is read from the tool's response or the hook name, never from its input
+  // (a command that merely contains the word "error" is not a failure).
+  function isFailure(e) {
+    var hook = String(e.hook_event_name || e._hook || '');
+    if (/fail|error/i.test(hook)) return true;
+    var r = e.tool_response;
+    if (!r || typeof r !== 'object') return false;
+    if (r.is_error === true || r.isError === true || r.success === false || r.interrupted === true) return true;
+    var code = r.exitCode !== undefined ? r.exitCode : r.exit_code !== undefined ? r.exit_code : r.code;
+    if (typeof code === 'number' && code !== 0) return true;
+    return typeof r.error === 'string' && r.error.length > 0;
+  }
+
+  function toolLabel(name) {
+    name = String(name || '?');
+    if (name.indexOf('mcp__') !== 0) return name;
+    // mcp__plugin_chrome-devtools-mcp_chrome-devtools__take_screenshot -> chrome-devtools
+    var server = name.split('__')[1] || 'mcp';
+    server = server.replace(/^plugin_/, '').replace(/^claude_ai_/, '').split('_').pop();
+    return 'mcp:' + server;
+  }
+
+  // ------------------------------------------------------------------ canvas + loop
+  // Paused while off screen (hidden tab) or while the whole page is hidden; both must clear to resume.
+  var onScreen = true, pageVisible = !document.hidden, watching = false;
+  function visibleNow() { return onScreen && pageVisible; }
+  function watch(el) {
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver(function (entries) { onScreen = entries[entries.length - 1].isIntersecting; }).observe(el);
+    }
+    if (!watching) {
+      watching = true;
+      document.addEventListener('visibilitychange', function () { pageVisible = !document.hidden; });
+    }
+  }
+
+  function surface(el) {
+    var s = { el: el, ctx: el.getContext('2d'), w: 0, h: 0, dpr: 1, resized: true };
+    s.fit = function () {
+      var dpr = Math.min(2, window.devicePixelRatio || 1);
+      var w = Math.max(1, el.clientWidth), h = Math.max(1, el.clientHeight);
+      if (w !== s.w || h !== s.h || dpr !== s.dpr) {
+        s.w = w; s.h = h; s.dpr = dpr;
+        el.width = Math.round(w * dpr);
+        el.height = Math.round(h * dpr);
+        s.resized = true;
+      }
+      s.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return s;
+    };
+    watch(el);
+    return s;
+  }
+
+  function loop(fn, fpsCap) {
+    var last = 0, lastDraw = 0, logged = false, cap = fpsCap || 60;
+    function frame(now) {
+      requestAnimationFrame(frame);
+      if (!visibleNow()) { last = 0; return; }
+      if (now - lastDraw < 1000 / cap - 2) return;
+      var dt = last ? Math.min((now - last) / 1000, 0.1) : 1 / 60;
+      last = lastDraw = now;
+      try { fn(dt, now / 1000); } catch (e) {
+        if (!logged) { logged = true; console.error('[cyber-kit]', e); }
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function resetCtx(ctx) {
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+  }
+
+  // ------------------------------------------------------------------ small utils
+  function hash(str) {
+    var h = 2166136261;
+    str = String(str);
+    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return ((h >>> 0) % 100000) / 100000;
+  }
+
+  function prng(seed) {
+    var a = (seed * 4294967296) >>> 0 || 1;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      var t = Math.imul(a ^ (a >>> 15), a | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function fmtBytes(b) {
+    if (hasSdk && moltamp.fmt && moltamp.fmt.bytes) return moltamp.fmt.bytes(b);
+    var u = ['B', 'KB', 'MB', 'GB'], i = 0;
+    while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+    return b.toFixed(i ? 1 : 0) + ' ' + u[i];
+  }
+
+  // Skin switches update CSS variables live; re-resolve once a second.
+  poll(1000, refreshColors);
+
+  return {
+    c: c, rgb: rgb, rgba: rgba, mix: mix, lum: lum, refreshColors: refreshColors,
+    poll: poll, subscribe: subscribe, call: call, font: font,
+    state: currentState, stateInfo: state, onState: function (cb) { stateListeners.push(cb); },
+    telemetry: telemetry, telemetryLevel: telemetryLevel,
+    onEvents: onEvents, isFailure: isFailure, toolLabel: toolLabel,
+    surface: surface, loop: loop, resetCtx: resetCtx, isVisible: visibleNow,
+    hash: hash, prng: prng, fmtBytes: fmtBytes,
+    meta: (hasSdk && moltamp.meta) || { context: 'panel' }
+  };
+})();
+
+// Event Horizon: an original black-hole shader (MIT). The horizon grows with Claude's context usage,
+// the accretion disk heats up with token throughput, a compaction releases a Hawking-radiation burst.
+(function () {
+  'use strict';
+  var canvas = document.getElementById('cy-canvas');
+  var label = document.getElementById('cy-label');
+  var hasSdk = typeof window.moltamp !== 'undefined';
+  var cfg = { maxPixels: 500000, fpsCap: 30, incl: 0.22 };
+  var D = 30;
+  var gl = null, api = '', prog = null, buf = null, U = {}, lost = false, broken = false;
+  var sim = { ctx: null, rs: 0.85, heat: 0.3, flare: 0, clock: 0, burstAt: -1e9, err: 0, pulse: 0, warn: 0,
+    tps: 0, tpsTarget: 0, tokens: null, tokAt: 0 };
+  var t = 0, quality = 1, avgInt = 0, lastAdjust = 0, lastText = '', labelAt = 0;
+
+  // ------------------------------------------------------------------ shaders
+  var VS2 = '#version 300 es\nin vec2 aPos;\nvoid main() { gl_Position = vec4(aPos, 0.0, 1.0); }\n';
+  var VS1 = 'attribute vec2 aPos;\nvoid main() { gl_Position = vec4(aPos, 0.0, 1.0); }\n';
+  var FS_HEAD2 = '#version 300 es\nprecision highp float;\nout vec4 fragColor;\n#define SET_COLOR(c) fragColor = c\n';
+  var FS_HEAD1 = '#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n' +
+    '#define SET_COLOR(c) gl_FragColor = c\n';
+  var FS_BODY = [
+    'uniform vec2 uRes;',
+    'uniform float uTime, uClock, uRs, uIncl, uHalfH, uStarScale, uHeat, uBurst, uFlicker, uPulse, uWarn, uLight;',
+    'uniform vec3 uBg, uFg, uAccent, uMagenta, uCyan, uYellow, uRed, uHot, uShadow, uRing, uBurstCol;',
+    '',
+    'float hash13(vec3 p) { return fract(sin(dot(p, vec3(127.1, 311.7, 74.7))) * 43758.5453); }',
+    '',
+    '// Trilinear value noise',
+    'float noise3(vec3 p) {',
+    '  vec3 i = floor(p), f = fract(p);',
+    '  f = f * f * (3.0 - 2.0 * f);',
+    '  float a = hash13(i), b = hash13(i + vec3(1.0, 0.0, 0.0)), c = hash13(i + vec3(0.0, 1.0, 0.0)), d = hash13(i + vec3(1.0, 1.0, 0.0));',
+    '  float e = hash13(i + vec3(0.0, 0.0, 1.0)), g = hash13(i + vec3(1.0, 0.0, 1.0)), h = hash13(i + vec3(0.0, 1.0, 1.0)), k = hash13(i + vec3(1.0, 1.0, 1.0));',
+    '  return mix(mix(mix(a, b, f.x), mix(c, d, f.x), f.y), mix(mix(e, g, f.x), mix(h, k, f.x), f.y), f.z);',
+    '}',
+    '',
+    'float fbm3(vec3 p) {',
+    '  float s = 0.0, amp = 0.5;',
+    '  for (int i = 0; i < 4; i++) { s += amp * noise3(p); p = p * 2.07 + vec3(11.3, 7.1, 3.7); amp *= 0.5; }',
+    '  return s;',
+    '}',
+    '',
+    'vec2 rot(vec2 v, float a) { float c = cos(a), s = sin(a); return vec2(c * v.x - s * v.y, s * v.x + c * v.y); }',
+    '',
+    '// Lensed sky: a soft two-tone nebula and a star field sized in screen pixels.',
+    'vec3 sky(vec3 d) {',
+    '  float n = fbm3(d * 2.4 + vec3(0.0, 0.0, uTime * 0.004));',
+    '  float m = noise3(d * 4.5 + 9.3);',
+    '  float cloud = smoothstep(0.42, 0.85, n);',
+    '  vec3 neb = mix(uMagenta, uCyan, smoothstep(0.35, 0.65, m)) * cloud;',
+    '  vec3 c = d * uStarScale;',
+    '  vec3 cell = floor(c);',
+    '  vec3 f = fract(c) - 0.5;',
+    '  float h = hash13(cell);',
+    '  vec3 off = vec3(hash13(cell + 7.13), hash13(cell + 3.71), hash13(cell + 5.37)) - 0.5;',
+    '  float dist = length(f - off * 0.6);',
+    '  float tw = 0.65 + 0.35 * sin(uTime * (0.8 + 2.5 * h) + h * 50.0);',
+    '  float star = step(0.86, h) * smoothstep(0.22, 0.0, dist) * tw * (0.5 + 1.5 * (h - 0.86) / 0.14);',
+    '  if (uLight > 0.5) return mix(uBg, mix(uBg, uMagenta, 0.5), cloud * 0.25) + (uFg - uBg) * min(star, 1.0) * 0.55;',
+    '  return uBg * 0.7 + neb * 0.32 + mix(uFg, uCyan, fract(h * 13.0)) * star;',
+    '}',
+    '',
+    'float diskPattern(vec2 q, float r, float seed) {',
+    '  float n = noise3(vec3(q * 0.8, seed)) * 0.55 + noise3(vec3(q * 2.1, seed + 7.0)) * 0.3 + noise3(vec3(q * 5.3, seed + 13.0)) * 0.15;',
+    '  float bands = 0.65 + 0.35 * sin(r * 4.2 + n * 6.0);',
+    '  return clamp(n * 1.6 - 0.25, 0.0, 1.0) * bands;',
+    '}',
+    '',
+    '// Accretion disk in the y = 0 plane: premultiplied colour + coverage.',
+    'vec4 disk(vec3 hit, vec3 vel) {',
+    '  float r = length(hit.xz);',
+    '  float rin = 3.0 * uRs, rout = 9.5;',
+    '  if (r < rin * 0.85 || r > rout * 1.1) return vec4(0.0);',
+    '  float edge = smoothstep(rin * 0.85, rin * 1.15, r) * (1.0 - smoothstep(rout * 0.7, rout * 1.1, r));',
+    '  // Keplerian shear, kept bounded by cross-fading two phases of the flow.',
+    '  float omega = 1.6 * pow(r / 3.0, -1.5);',
+    '  float T = 6.0;',
+    '  float c1 = uClock / T, c2 = c1 + 0.5;',
+    '  float ph1 = fract(c1), ph2 = fract(c2);',
+    '  float w1 = 1.0 - abs(2.0 * ph1 - 1.0);',
+    '  float p1 = diskPattern(rot(hit.xz, -omega * ph1 * T), r, floor(c1) * 17.0);',
+    '  float p2 = diskPattern(rot(hit.xz, -omega * ph2 * T), r, floor(c2) * 17.0 + 5.0);',
+    '  float dens = mix(p2, p1, w1);',
+    '  // Thin-disk temperature profile, Doppler beaming and gravitational redshift.',
+    '  float x = rin / max(r, 1e-3);',
+    '  float temp = pow(x, 0.75) * pow(max(1.0 - sqrt(x) * 0.98, 0.0), 0.25) * 1.9;',
+    '  float beta = min(0.62, sqrt(uRs / max(2.0 * (r - uRs), 0.2)));',
+    '  vec3 tang = normalize(vec3(-hit.z, 0.0, hit.x));',
+    '  float cosT = dot(tang, -normalize(vel));',
+    '  float g = sqrt(1.0 - beta * beta) / (1.0 - beta * cosT);',
+    '  float grav = sqrt(max(1.0 - uRs / r, 0.04));',
+    '  float heat = temp * (0.55 + uHeat * 0.9) * pow(g * grav, 3.0);',
+    '  float pulse = 1.0 - uPulse * 0.45 * (0.5 + 0.5 * sin(uTime * 2.4));',
+    '  float I = heat * (0.25 + 0.75 * dens) * edge * pulse;',
+    '  vec3 c = mix(uRed, uMagenta, smoothstep(0.05, 0.35, heat));',
+    '  c = mix(c, uAccent, smoothstep(0.3, 0.75, heat));',
+    '  c = mix(c, uYellow, smoothstep(0.7, 1.3, heat));',
+    '  c = mix(c, uHot, smoothstep(1.3, 2.4, heat));',
+    '  c = mix(c, uRed, uFlicker * 0.85);',
+    '  float alpha = clamp(I * 1.2, 0.0, 0.92) * edge;',
+    '  return vec4(uLight > 0.5 ? c * alpha : c * I, alpha);',
+    '}',
+    '',
+    'void main() {',
+    '  vec2 uv = (gl_FragCoord.xy - 0.5 * uRes) / uRes.y;',
+    '  vec3 cam = vec3(0.0, sin(uIncl), -cos(uIncl)) * 30.0;',
+    '  vec3 fwd = -normalize(cam);',
+    '  vec3 right = normalize(cross(fwd, vec3(0.0, 1.0, 0.0)));',
+    '  vec3 up = cross(right, fwd);',
+    '  vec3 v = normalize(fwd + (right * uv.x + up * uv.y) * (2.0 * uHalfH / 30.0));',
+    '  vec3 p = cam;',
+    '  vec3 hv = cross(p, v);',
+    '  float h2 = dot(hv, hv);',
+    '  vec4 acc = vec4(0.0);',
+    '  float rmin = 1e4;',
+    '  float fate = 0.0;',
+    '  // Photon paths around a Schwarzschild mass: a = -1.5 rs h^2 p / r^5 (h = angular momentum).',
+    '  for (int i = 0; i < 140; i++) {',
+    '    float r = length(p);',
+    '    rmin = min(rmin, r);',
+    '    if (r < uRs) { fate = 2.0; break; }',
+    '    if (r > 48.0 && dot(p, v) > 0.0) { fate = 1.0; break; }',
+    '    if (acc.a > 0.97) { fate = 3.0; break; }',
+    '    float dt = clamp((r - uRs) * 0.2, 0.025, 2.4);',
+    '    v += -1.5 * uRs * h2 * p / (r * r * r * r * r) * dt;',
+    '    vec3 pn = p + v * dt;',
+    '    if (p.y * pn.y < 0.0) {',
+    '      vec4 d = disk(mix(p, pn, p.y / (p.y - pn.y)), v);',
+    '      acc.rgb += (1.0 - acc.a) * d.rgb;',
+    '      acc.a += (1.0 - acc.a) * d.a;',
+    '    }',
+    '    p = pn;',
+    '  }',
+    '  vec3 back = fate == 1.0 ? sky(normalize(v)) : uShadow;',
+    '  vec3 col = acc.rgb + (1.0 - acc.a) * back;',
+    '  if (fate == 1.0) {',
+    '    // Photon ring: rays that skimmed the photon sphere (1.5 rs) on their way out',
+    '    float ring = exp(-pow((rmin - 1.5 * uRs) / (0.06 * uRs + 0.015), 2.0));',
+    '    col += ring * uRing * (0.55 + uWarn * 0.8) * (1.0 - acc.a);',
+    '    col += uWarn * uRed * exp(-max(rmin - 1.5 * uRs, 0.0) / (1.2 * uRs)) * 0.4 * (0.65 + 0.35 * sin(uTime * 2.2));',
+    '  }',
+    '  // Hawking burst after a compaction: an expanding ring and a flash',
+    '  float q = length(uv) * 2.0 * uHalfH;',
+    '  float R = 2.6 * uRs + uBurst * 10.0;',
+    '  float wv = 0.25 + uBurst * 0.6;',
+    '  col += uBurstCol * (exp(-pow((q - R) / wv, 2.0)) * exp(-uBurst * 0.9) * 1.2 + exp(-uBurst * 6.0) * 0.35);',
+    '  if (uLight < 0.5) col = 1.0 - exp(-col * 1.5);',
+    '  SET_COLOR(vec4(clamp(col, 0.0, 1.0), 1.0));',
+    '}'
+  ].join('\n');
+  var UNIFORMS = ['uRes', 'uTime', 'uClock', 'uRs', 'uIncl', 'uHalfH', 'uStarScale', 'uHeat', 'uBurst', 'uFlicker', 'uPulse', 'uWarn',
+    'uLight', 'uBg', 'uFg', 'uAccent', 'uMagenta', 'uCyan', 'uYellow', 'uRed', 'uHot', 'uShadow', 'uRing', 'uBurstCol'];
+
+  function compile(type, src) {
+    var sh = gl.createShader(type);
+    gl.shaderSource(sh, src);
+    gl.compileShader(sh);
+    if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS) && !gl.isContextLost()) {
+      console.error('[event-horizon] shader: ' + gl.getShaderInfoLog(sh));
+      return null;
+    }
+    return sh;
+  }
+
+  // (Re)creates every GL resource; also used after a context restore.
+  function buildGL() {
+    prog = null;
+    if (!gl) {
+      var attrs = { alpha: false, antialias: false, depth: false, stencil: false, premultipliedAlpha: false, preserveDrawingBuffer: false };
+      gl = canvas.getContext('webgl2', attrs);
+      api = gl ? 'webgl2' : '';
+      if (!gl) {
+        gl = canvas.getContext('webgl', attrs) || canvas.getContext('experimental-webgl', attrs);
+        api = gl ? 'webgl' : '';
+      }
+      if (!gl) return false;
+    }
+    var v2 = api === 'webgl2';
+    var vs = compile(gl.VERTEX_SHADER, v2 ? VS2 : VS1), fs = compile(gl.FRAGMENT_SHADER, (v2 ? FS_HEAD2 : FS_HEAD1) + FS_BODY);
+    if (!vs || !fs) return false;
+    var p = gl.createProgram();
+    gl.attachShader(p, vs);
+    gl.attachShader(p, fs);
+    gl.bindAttribLocation(p, 0, 'aPos');
+    gl.linkProgram(p);
+    if (!gl.getProgramParameter(p, gl.LINK_STATUS) && !gl.isContextLost()) {
+      console.error('[event-horizon] link: ' + gl.getProgramInfoLog(p));
+      return false;
+    }
+    U = {};
+    UNIFORMS.forEach(function (n) { U[n] = gl.getUniformLocation(p, n); });
+    buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    prog = p;
+    return true;
+  }
+
+  canvas.addEventListener('webglcontextlost', function (e) { e.preventDefault(); lost = true; prog = null; });
+  canvas.addEventListener('webglcontextrestored', function () { lost = false; broken = !buildGL(); });
+
+  // ------------------------------------------------------------------ data
+  function num(v) {
+    if (typeof v === 'string') v = parseFloat(v);
+    return typeof v === 'number' && isFinite(v) ? v : null;
+  }
+  function pick(o, paths) {
+    for (var i = 0; i < paths.length; i++) {
+      var v = o, parts = paths[i].split('.');
+      for (var j = 0; j < parts.length && v !== null && v !== undefined; j++) v = v[parts[j]];
+      v = num(v);
+      if (v !== null) return v;
+    }
+    return null;
+  }
+
+  function readStats() {
+    CK.call('stats.read').then(function (s) {
+      s = s || {};
+      var now = performance.now();
+      var ctx = pick(s, ['contextPct', 'context_pct', 'context.used_percentage', 'context_window.used_percentage', 'context.pct']);
+      if (ctx !== null) {
+        ctx = Math.max(0, Math.min(100, ctx));
+        // A sharp drop is a compaction (or a fresh session): the hole radiates.
+        if (sim.ctx !== null && sim.ctx - ctx >= 15) sim.burstAt = now;
+      }
+      sim.ctx = ctx;
+      var tin = pick(s, ['tokensIn', 'tokens_in', 'inputTokens']), tout = pick(s, ['tokensOut', 'tokens_out', 'outputTokens']);
+      var tok = tin !== null || tout !== null ? (tin || 0) + (tout || 0) : pick(s, ['tokens']);
+      if (tok !== null) {
+        sim.tpsTarget = sim.tokens !== null && tok >= sim.tokens && now > sim.tokAt ? (tok - sim.tokens) / ((now - sim.tokAt) / 1000) : 0;
+        sim.tokens = tok;
+        sim.tokAt = now;
+      }
+    }).catch(function () { sim.ctx = null; });
+  }
+  readStats();
+  CK.poll(3000, readStats);
+  CK.telemetry();
+  CK.onState(function (st) {
+    if (st === 'error') sim.err = 1;
+    if (st === 'complete') sim.flare = 1;
+  });
+
+  // Per-widget overrides persisted with moltamp.settings: { maxPixels, fpsCap, incl }.
+  function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+  if (hasSdk && moltamp.settings) {
+    moltamp.settings.read().then(function (s) {
+      s = s || {};
+      if (num(s.maxPixels) > 20000) cfg.maxPixels = num(s.maxPixels);
+      if (num(s.fpsCap) >= 5) cfg.fpsCap = Math.min(120, num(s.fpsCap));
+      if (num(s.incl) !== null) cfg.incl = clamp(num(s.incl), 0.05, 1.4);
+    }).catch(function () { /* first run: defaults */ });
+  }
+
+  // ------------------------------------------------------------------ drag to tilt (left button only)
+  var drag = null, saveTimer = 0;
+  canvas.style.touchAction = 'none';
+  canvas.addEventListener('pointerdown', function (e) {
+    if (e.button !== 0 || e.ctrlKey) return;
+    drag = { x: e.clientX, incl: cfg.incl };
+    try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* capture is optional */ }
+  });
+  canvas.addEventListener('pointermove', function (e) {
+    if (drag) cfg.incl = clamp(drag.incl + (e.clientX - drag.x) * 0.004, 0.05, 1.4);
+  });
+  function endDrag() {
+    if (!drag) return;
+    drag = null;
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(function () {
+      if (!hasSdk || !moltamp.settings) return;
+      // Read then merge: the write may replace the whole object.
+      moltamp.settings.read().then(function (cur) {
+        return moltamp.settings.write(Object.assign({}, cur || {}, { incl: Math.round(cfg.incl * 1000) / 1000 }));
+      }).catch(function () { /* keep the tilt for this session only */ });
+    }, 800);
+  }
+  canvas.addEventListener('pointerup', endDrag);
+  canvas.addEventListener('pointercancel', endDrag);
+
+  // ------------------------------------------------------------------ simulation
+  var HEAT = { idle: 0.25, thinking: 0.45, streaming: 0.65, 'tool-use': 0.85, permission: 0.35, error: 0.6, complete: 0.7 };
+  function update(dt) {
+    var st = CK.state(), k = 1 - Math.exp(-dt / 1.2);
+    sim.tps += (sim.tpsTarget - sim.tps) * (1 - Math.exp(-dt / 2));
+    var level = CK.telemetryLevel(dt);
+    var heatT = (HEAT[st] || 0.3) + Math.min(0.45, Math.log(1 + sim.tps) / Math.LN10 / 8) + level * 0.2 + sim.flare * 0.4;
+    sim.heat += (heatT - sim.heat) * k;
+    sim.flare *= Math.exp(-dt * 1.5);
+    // Small at an empty context, menacing near the limit; calm default without data.
+    var rsT = sim.ctx === null ? 0.85 : 0.6 + 1.15 * Math.pow(sim.ctx / 100, 1.25);
+    sim.rs += (rsT - sim.rs) * (1 - Math.exp(-dt / 1.6));
+    sim.warn += ((sim.ctx !== null && sim.ctx > 80 ? (sim.ctx - 80) / 20 : 0) - sim.warn) * k;
+    sim.pulse += ((st === 'permission' ? 1 : 0) - sim.pulse) * (1 - Math.exp(-dt / 0.6));
+    sim.err *= Math.exp(-dt * 1.2);
+    sim.clock += dt * (0.25 + sim.heat * 0.9);
+    t = (t + dt) % 3600;
+  }
+
+  function rgb(name, mul) {
+    var v = CK.rgb[name] || CK.rgb.text;
+    mul = mul === undefined ? 1 : mul;
+    return [v[0] / 255 * mul, v[1] / 255 * mul, v[2] / 255 * mul];
+  }
+  function mixRgb(a, b, f) { return [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f]; }
+
+  function render() {
+    var cw = Math.max(1, canvas.clientWidth), ch = Math.max(1, canvas.clientHeight);
+    var dpr = Math.min(2, window.devicePixelRatio || 1);
+    var s = Math.min(dpr, Math.sqrt(cfg.maxPixels * quality / (cw * ch)));
+    var W = Math.max(1, Math.round(cw * s)), H = Math.max(1, Math.round(ch * s));
+    if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
+    // The disk spans the slot in a panel; in a wide bar the height frames the shadow.
+    var halfH = Math.max(Math.min(10.5 / (cw / ch), 13), 3.4 + sim.rs * 0.8);
+    var light = CK.lum('bg') > 0.5;
+    var yellow = rgb('yellow'), accent = rgb('accent'), fg = rgb('fg');
+    gl.viewport(0, 0, W, H);
+    gl.useProgram(prog);
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    gl.uniform2f(U.uRes, W, H);
+    gl.uniform1f(U.uTime, t);
+    gl.uniform1f(U.uClock, sim.clock);
+    gl.uniform1f(U.uRs, sim.rs);
+    gl.uniform1f(U.uIncl, cfg.incl);
+    gl.uniform1f(U.uHalfH, halfH);
+    gl.uniform1f(U.uStarScale, 1 / ((2 * halfH / D) / ch * 5));
+    gl.uniform1f(U.uHeat, sim.heat);
+    var since = (performance.now() - sim.burstAt) / 1000;
+    gl.uniform1f(U.uBurst, since >= 0 && since < 20 ? since : 99);
+    gl.uniform1f(U.uFlicker, sim.err > 0.02 ? sim.err * (Math.random() < 0.5 ? 1 : 0.3) : 0);
+    gl.uniform1f(U.uPulse, sim.pulse);
+    gl.uniform1f(U.uWarn, sim.warn);
+    gl.uniform1f(U.uLight, light ? 1 : 0);
+    gl.uniform3fv(U.uBg, rgb('bg'));
+    gl.uniform3fv(U.uFg, fg);
+    gl.uniform3fv(U.uAccent, accent);
+    gl.uniform3fv(U.uMagenta, rgb('magenta'));
+    gl.uniform3fv(U.uCyan, rgb('cyan'));
+    gl.uniform3fv(U.uYellow, yellow);
+    gl.uniform3fv(U.uRed, rgb('red'));
+    gl.uniform3fv(U.uHot, light ? mixRgb(yellow, fg, 0.25) : [1, 0.96, 0.9]);
+    gl.uniform3fv(U.uShadow, light ? rgb('fg', 0.35) : rgb('bg', 0.12));
+    gl.uniform3fv(U.uRing, light ? rgb('accent', 0.8) : mixRgb(accent, yellow, 0.5));
+    gl.uniform3fv(U.uBurstCol, light ? rgb('cyan', 0.8) : rgb('cyan'));
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  function fmtTps(n) { return n >= 1000 ? (n / 1000).toFixed(1) + 'k tok/s' : Math.round(n) + ' tok/s'; }
+
+  function updateLabel(now) {
+    if (now - labelAt < 500) return;
+    labelAt = now;
+    var text = broken ? '事象の地平面 · WebGL unavailable' : sim.ctx === null ? '事象の地平面 · no context data'
+      : '事象の地平面 · ' + (sim.ctx > 80 ? '⚠ ' : '') + 'ctx ' + Math.round(sim.ctx) + '%' + (sim.tps >= 1 ? ' · ' + fmtTps(sim.tps) : '');
+    if (text === lastText) return;
+    lastText = text;
+    label.textContent = text;
+    label.style.color = sim.ctx !== null && sim.ctx > 80 ? 'var(--t-red)' : 'var(--c-chrome-dim)';
+  }
+
+  // ------------------------------------------------------------------ loop (paused off screen or when the page is hidden)
+  var onScreen = true, pageVisible = !document.hidden;
+  if ('IntersectionObserver' in window) {
+    new IntersectionObserver(function (en) { onScreen = en[en.length - 1].isIntersecting; }).observe(canvas);
+  }
+  document.addEventListener('visibilitychange', function () { pageVisible = !document.hidden; });
+
+  broken = !buildGL();
+  var last = 0, lastDraw = 0, logged = false;
+  function frame(now) {
+    requestAnimationFrame(frame);
+    updateLabel(now);
+    if (!onScreen || !pageVisible || !gl || lost || !prog) { last = 0; return; }
+    var target = 1000 / cfg.fpsCap;
+    if (now - lastDraw < target - 2) return;
+    if (last) {
+      // Adaptive resolution: drop the pixel budget when frames come late, win it back when they are on time.
+      avgInt = avgInt ? avgInt * 0.9 + (now - last) * 0.1 : now - last;
+      if (now - lastAdjust > 1000 && avgInt > target * 1.6 && quality > 0.3) { quality = Math.max(0.3, quality * 0.8); lastAdjust = now; }
+      else if (now - lastAdjust > 4000 && avgInt < target * 1.15 && quality < 1) { quality = Math.min(1, quality * 1.1); lastAdjust = now; }
+    }
+    var dt = last ? Math.min((now - last) / 1000, 0.1) : 1 / cfg.fpsCap;
+    last = lastDraw = now;
+    try {
+      update(dt);
+      render();
+    } catch (e) {
+      if (!logged) { logged = true; console.error('[event-horizon]', e); }
+    }
+  }
+  requestAnimationFrame(frame);
+})();
+</script>

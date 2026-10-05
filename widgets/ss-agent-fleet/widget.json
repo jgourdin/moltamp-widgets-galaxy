@@ -1,0 +1,19 @@
+{
+  "id": "ss-agent-fleet",
+  "name": "Agent Fleet",
+  "version": "1.0.0",
+  "description": "Claude's sub-agents as a fleet of starships around the mothership: each agent launches from the hangar, flies in formation while it works, docks when it reports back and explodes if it fails. Scouts, cruisers and frigates follow the agent type. Click a ship to see its mission.",
+  "author": "j0j0",
+  "category": "Starship",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "event.events",
+      "event.eventCount",
+      "agent.agents",
+      "agent.activeCount"
+    ]
+  }
+}

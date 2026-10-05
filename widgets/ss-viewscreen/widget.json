@@ -1,0 +1,17 @@
+{
+  "id": "ss-viewscreen",
+  "name": "Viewscreen",
+  "version": "1.0.0",
+  "description": "The bridge's main screen: the ship cruises while Claude is idle, jumps to warp while it writes and runs tools, holds position on yellow alert while it waits for you, goes to red alert on errors and drops out of warp in a flash when the task is done.",
+  "author": "j0j0",
+  "category": "Starship",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "telemetry.bytesPerSec",
+      "telemetry.activity"
+    ]
+  }
+}

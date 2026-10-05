@@ -6,14 +6,14 @@
 
 **A universe of GPU-powered widgets and visualizers for [MOLTamp](https://moltamp.com), orbiting around Claude.**
 
-🪐 38 widgets · 🌠 9 visualizers · 🌌 4 constellations · 🎨 1 skin · 🛰️ zero network
+🪐 45 widgets · 🌠 9 visualizers · 🌌 5 constellations · 🎨 2 skins · 🛰️ zero network
 
 ![MOLTamp](https://img.shields.io/badge/MOLTamp-3.2.2-ff71ce?style=flat-square)
 ![WebGL2](https://img.shields.io/badge/WebGL-2.0-01cdfe?style=flat-square)
-![Constellations](https://img.shields.io/badge/constellations-4-b967ff?style=flat-square)
+![Constellations](https://img.shields.io/badge/constellations-5-b967ff?style=flat-square)
 ![License](https://img.shields.io/badge/license-CC%20BY--NC--SA%203.0%20%2B%20MIT-fffb96?style=flat-square)
 
-[🚀 Launch](#-launch-sequence) · [📡 Ground control](#-ground-control) · [🌌 Constellations](#-constellations) · [🌠 Visualizers](#-visualizers) · [🎨 Skin](#-skin) · [🔭 Observatory](#-observatory) · [⭐ Star chart](#-star-chart)
+[🚀 Launch](#-launch-sequence) · [📡 Ground control](#-ground-control) · [🌌 Constellations](#-constellations) · [🌠 Visualizers](#-visualizers) · [🎨 Skins](#-skins) · [🔭 Observatory](#-observatory) · [⭐ Star chart](#-star-chart)
 
 </div>
 
@@ -30,9 +30,9 @@ Then **restart MOLTamp** and pick your planets:
 
 | To add… | Go to… |
 |---|---|
-| 🪐 a widget | **Settings › Tabs**, category **Shaders**, **Cyberpunk**, **Mission Control** or **Night Lounge**, then drag it into a tab |
+| 🪐 a widget | **Settings › Tabs**, category **Shaders**, **Cyberpunk**, **Mission Control**, **Night Lounge** or **Starship**, then drag it into a tab |
 | 🌠 a visualizer | the ⚙️ gear of the **Visualizer** widget, then pick the preset |
-| 🎨 the skin | **Skins**, then pick **Galaxy** |
+| 🎨 a skin | **Skins**, then pick **Galaxy** or **Starship Bridge** |
 
 > [!TIP]
 > Widgets fill their whole slot. They shine brightest in the **Vibes bar**, at the very top of the window.
@@ -106,6 +106,19 @@ Three original widgets for the quiet hours: the weather outside, the music, and 
 > [!NOTE]
 > Click *Night Window*'s neon sign to type your city. *Cassette Deck* shows what macOS reports as now playing; album art only shows up when MOLTamp hands it over inline (widgets can't load remote images). *Token Pet* keeps its level in the widget settings, so it survives restarts.
 
+### 🚀 Starship
+
+Seven original widgets that turn MOLTamp into a starship flown by Claude: a main screen, a 3D map of your codebase, a black hole made of context, a fleet of sub-agents, a log of the planets you discover, a star chart of your year, and a radio that plays the voyage.
+
+<table>
+<tr><td align="center" valign="top" width="33%"><img src="docs/starship/ss-viewscreen.jpg" width="260" alt="Viewscreen"><br><b>Viewscreen</b><br><sub>The main screen: cruise when Claude is idle, warp while it works, yellow alert when it waits for you, red alert on errors.<br>feeds on <i>Claude state</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/starship/ss-codebase-cosmos.jpg" width="260" alt="Codebase Cosmos"><br><b>Codebase Cosmos</b><br><sub>Your repo as a 3D galaxy: one arm per top folder, one star per file; edits grow stars, commits set off supernovas.<br>feeds on <i>hook events, Git</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/starship/ss-event-horizon.jpg" width="260" alt="Event Horizon"><br><b>Event Horizon</b><br><sub>A black hole whose horizon grows with your context window; a compaction releases a burst of Hawking radiation.<br>feeds on <i>context, tokens</i></sub></td></tr>
+<tr><td align="center" valign="top" width="33%"><img src="docs/starship/ss-agent-fleet.jpg" width="260" alt="Agent Fleet"><br><b>Agent Fleet</b><br><sub>Sub-agents launch from the mothership, fly in formation while they run and dock when they are done.<br>feeds on <i>hook events</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/starship/ss-planet-log.jpg" width="260" alt="Planet Log"><br><b>Planet Log</b><br><sub>Every finished task is a hyperspace jump to a new procedural planet, kept in a log you can browse.<br>feeds on <i>hook events, Git</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/starship/ss-year-in-space.jpg" width="260" alt="Year in Space"><br><b>Year in Space</b><br><sub>Your year with Claude as a star chart: one star per day, streaks traced as constellations.<br>feeds on <i>lifetime stats</i></sub></td></tr>
+<tr><td align="center" valign="top" width="33%"><img src="docs/starship/ss-deep-space-radio.jpg" width="260" alt="Deep Space Radio"><br><b>Deep Space Radio</b><br><sub>A generative ambient soundtrack that follows Claude, and drives your visualizers.<br>feeds on <i>Claude state, hook events</i></sub></td></tr>
+</table>
+
+> [!TIP]
+> Pair them with the **Starship Bridge** skin: its default layout puts the Viewscreen and Event Horizon on the main screen and the rest on the HELM, SCIENCE, LOG and COMMS consoles. *Deep Space Radio* needs one click to start (browsers never autoplay sound); since visualizers listen to your Mac's audio, Claude's soundtrack makes them dance too.
+
 ## 🌠 Visualizers
 
 The sound of the galaxy. Pick them from the ⚙️ gear of the Visualizer widget: they react to everything coming out of your speakers (Spotify, YouTube, anything).
@@ -119,13 +132,17 @@ The sound of the galaxy. Pick them from the ⚙️ gear of the Visualizer widget
 - **GPU**: the original GLSL runs inside the visualizer worker, fed with the real spectrum and painted in your skin colours.
 - **Canvas 2D**: feather-light, 100% skin colours, and it jumps on every beat. *Audio Galaxy* is original work by j0j0 (MIT).
 
-## 🎨 Skin
+## 🎨 Skins
 
 <img src="docs/galaxy/widgets-galaxy.jpg" width="520" alt="Galaxy skin palette">
 
 **Galaxy**: deep space in vaporwave pink, cyan and purple. Nebula panels under a twinkling star field, an aurora line under the banner, and a shell that breathes with Claude (purple while it thinks, a mint flash when it's done). Its banner GIF shows six of the shaders in motion, and its default layout puts the galaxy's widgets and the *Audio Galaxy* visualizer on stage.
 
 Every effect can be switched off in the skin settings: *Glow*, *Nebula*, *Star Field*, *Aurora Line*, *Vibes Glow*, *Claude Pulse*.
+
+<img src="docs/starship/starship-bridge.jpg" width="520" alt="Starship Bridge skin">
+
+**Starship Bridge**: slate hull panels, amber instrument lights and teal readouts. A scanner sweeps under the main screen while Claude works, the side consoles pulse yellow when it waits for you and red on errors, and a green all-clear flashes when the task is done. Effects: *Glow*, *Hull Grid*, *Scanner*, *Alert Lights*, *Console Glow*.
 
 ## 🔭 Observatory
 
@@ -210,11 +227,11 @@ All the light in this galaxy comes from the [Shadertoy](https://www.shadertoy.co
 
 Original textures (photos, cubemaps) are replaced with generated ones, so no Shadertoy media is redistributed. Inigo Quilez's *Clouds* and *Elevated* are not ported: their license forbids it.
 
-The **Cyberpunk District**, **Mission Control**, **Night Lounge**, *Audio Galaxy* and the **Galaxy** skin are original work by j0j0.
+The **Cyberpunk District**, **Mission Control**, **Night Lounge**, **Starship**, *Audio Galaxy* and the **Galaxy** and **Starship Bridge** skins are original work by j0j0.
 
 ## 📜 License
 
-The **Cyberpunk District**, **Mission Control** and **Night Lounge** widgets, *Audio Galaxy* and the **Galaxy** skin are **MIT** (except the skin's banner GIF, which shows CC ports). Most Shadertoy ports are **CC BY-NC-SA 3.0**: credit the authors, no commercial use, share alike.
+The **Cyberpunk District**, **Mission Control**, **Night Lounge** and **Starship** widgets, *Audio Galaxy* and both skins are **MIT** (except the Galaxy skin's banner GIF, which shows CC ports). Most Shadertoy ports are **CC BY-NC-SA 3.0**: credit the authors, no commercial use, share alike.
 *Open Ocean*, *Mondrian Hexagons* and the runner code are **MIT**. File-by-file details in [LICENSE.md](LICENSE.md).
 *Exusiai Jump* and *PRTS Dance* are fan art of Arknights characters (owned by Hypergryph).
 

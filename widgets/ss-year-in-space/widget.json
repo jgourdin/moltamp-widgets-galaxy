@@ -1,0 +1,16 @@
+{
+  "id": "ss-year-in-space",
+  "name": "Year in Space",
+  "version": "1.0.0",
+  "description": "Your year with Claude as a star chart: one star per day on a spiral where each turn is a month, brighter the more you worked, with your streaks traced as constellations and the best one lit up. Hover a star for that day; click to switch between messages, tool calls and sessions.",
+  "author": "j0j0",
+  "category": "Starship",
+  "sizing": "fill",
+  "agent": "claude",
+  "api": {
+    "ipc": [
+      "stats.read"
+    ],
+    "shellState": true
+  }
+}

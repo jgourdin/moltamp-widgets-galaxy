@@ -1,0 +1,560 @@
+<!--
+  Year in Space — Starship pack for MOLTamp
+  Your year with Claude as a star chart: one star per day on a spiral where each turn is a month, brighter the more you worked, with your streaks traced as constellations and the best one lit up. Hover a star for that day; click to switch between messages, tool calls and sessions.
+  Author: j0j0 · License: MIT
+-->
+<div id="cy-root"><canvas id="cy-canvas"></canvas><div id="cy-label"></div></div>
+
+<style>
+  #cy-root { position: absolute; inset: 0; overflow: hidden; background: var(--c-chrome-bg); container-type: size; }
+  #cy-canvas { display: block; width: 100%; height: 100%; }
+  #cy-label {
+    position: absolute; left: 8px; bottom: 6px; pointer-events: none; letter-spacing: 0.08em;
+    color: var(--c-chrome-dim); text-shadow: 0 0 6px var(--c-chrome-bg);
+    font: calc(clamp(8px, 3.4cqw, 12px) * var(--user-text-scale, 1)) 'SF Mono', Menlo, 'Hiragino Sans', monospace;
+  }
+</style>
+
+<script>
+// cyber-kit — shared runtime of the Cyberpunk widget pack (MIT, j0j0).
+// Skin colours resolved for canvas use, DPR-aware canvas, pause when hidden, Claude state, telemetry.
+var CK = (function () {
+  'use strict';
+
+  var hasSdk = typeof window.moltamp !== 'undefined';
+
+  // ------------------------------------------------------------------ skin colours
+  var VARS = {
+    bg: '--c-chrome-bg', text: '--c-chrome-text', accent: '--c-chrome-accent', dim: '--c-chrome-dim',
+    border: '--c-chrome-border', fg: '--t-foreground', termBg: '--t-background', red: '--t-red',
+    green: '--t-green', yellow: '--t-yellow', blue: '--t-blue', cyan: '--t-cyan', magenta: '--t-magenta'
+  };
+  // A colour missing from the skin borrows another skin colour, never a hardcoded value.
+  var BORROW = {
+    text: ['fg', 'accent'], fg: ['text', 'accent'], accent: ['text', 'fg'], dim: ['text', 'fg'], border: ['dim', 'text'],
+    bg: ['termBg'], termBg: ['bg'], red: ['magenta', 'accent'], green: ['cyan', 'accent'], yellow: ['accent', 'red'],
+    blue: ['cyan', 'accent'], cyan: ['blue', 'accent'], magenta: ['red', 'accent']
+  };
+  var probeEl = document.createElement('span');
+  probeEl.style.display = 'none';
+  (document.body || document.documentElement).appendChild(probeEl);
+  var pc = document.createElement('canvas');
+  pc.width = pc.height = 1;
+  var pctx = pc.getContext('2d', { willReadFrequently: true });
+  var rgb = {};
+  var c = {};
+
+  // Resolves any CSS colour the skin may use (hex, rgb, var(), color-mix()) to RGB bytes.
+  function readVar(name) {
+    var raw = getComputedStyle(document.documentElement).getPropertyValue(VARS[name]).trim();
+    if (!raw) return null;
+    probeEl.style.color = '';
+    probeEl.style.color = raw;
+    var computed = getComputedStyle(probeEl).color;
+    pctx.fillStyle = '#010203';
+    pctx.fillStyle = computed;
+    if (pctx.fillStyle === '#010203' && computed !== 'rgb(1, 2, 3)') return null;
+    pctx.clearRect(0, 0, 1, 1);
+    pctx.fillRect(0, 0, 1, 1);
+    var d = pctx.getImageData(0, 0, 1, 1).data;
+    return [d[0], d[1], d[2]];
+  }
+
+  function refreshColors() {
+    var name, raw = {};
+    for (name in VARS) raw[name] = readVar(name);
+    for (name in VARS) {
+      var v = raw[name], chain = BORROW[name] || [];
+      for (var i = 0; !v && i < chain.length; i++) v = raw[chain[i]];
+      if (!v) {
+        // Last resort: the host's own text colour, still a skin value.
+        probeEl.style.color = '';
+        var m = /(\d+)\D+(\d+)\D+(\d+)/.exec(getComputedStyle(document.body || document.documentElement).color) || [0, 128, 128, 128];
+        v = [+m[1], +m[2], +m[3]];
+      }
+      rgb[name] = v;
+      c[name] = 'rgb(' + v[0] + ',' + v[1] + ',' + v[2] + ')';
+    }
+  }
+  refreshColors();
+
+  function rgba(name, a) {
+    var v = rgb[name] || rgb.text;
+    return 'rgba(' + v[0] + ',' + v[1] + ',' + v[2] + ',' + a + ')';
+  }
+
+  function mix(a, b, t, alpha) {
+    var x = rgb[a] || rgb.text, y = rgb[b] || rgb.text;
+    var r = Math.round(x[0] + (y[0] - x[0]) * t), g = Math.round(x[1] + (y[1] - x[1]) * t), bl = Math.round(x[2] + (y[2] - x[2]) * t);
+    return alpha === undefined ? 'rgb(' + r + ',' + g + ',' + bl + ')' : 'rgba(' + r + ',' + g + ',' + bl + ',' + alpha + ')';
+  }
+
+  function lum(name) {
+    var v = rgb[name] || rgb.text;
+    return (0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]) / 255;
+  }
+
+  // ------------------------------------------------------------------ sdk wrappers
+  // moltamp.poll only: it cleans itself up when the widget unloads (store rule: no raw setInterval).
+  function poll(ms, fn) {
+    if (hasSdk && moltamp.poll) return moltamp.poll(ms, fn);
+    return function () {};
+  }
+
+  function subscribe(store, selector, cb) {
+    if (!hasSdk || !moltamp.subscribe) return function () {};
+    try { return moltamp.subscribe(store, selector, cb) || function () {}; } catch (e) { return function () {}; }
+  }
+
+  function call(channel) {
+    if (!hasSdk || !moltamp.call) return Promise.reject(new Error('no sdk'));
+    try { return Promise.resolve(moltamp.call.apply(moltamp, arguments)); } catch (e) { return Promise.reject(e); }
+  }
+
+  // ------------------------------------------------------------------ text scale (Settings > Display)
+  var textScale = 1;
+  if (hasSdk && moltamp.settings) {
+    moltamp.settings.read().then(function (cfg) {
+      cfg = cfg || {};
+      if (typeof cfg.widgetTextScale === 'number') textScale = cfg.widgetTextScale;
+      document.documentElement.style.setProperty('--user-text-scale', String(textScale));
+    }).catch(function () { /* first run: no settings */ });
+  }
+
+  function font(size, weight) {
+    return (weight || 'normal') + ' ' + Math.max(7, size * textScale).toFixed(1) +
+      'px "SF Mono", Menlo, "Hiragino Sans", "Hiragino Kaku Gothic ProN", monospace';
+  }
+
+  // ------------------------------------------------------------------ Claude shell state
+  var STATES = ['idle', 'thinking', 'streaming', 'tool-use', 'permission', 'error', 'complete'];
+  var state = { name: 'idle', since: performance.now(), seen: false };
+  var stateListeners = [];
+  window.addEventListener('message', function (e) {
+    var d = e.data;
+    if (!d || d.type !== 'moltamp:push' || d.subscriptionId !== 'shell-state' || STATES.indexOf(d.data) < 0) return;
+    var prev = state.name;
+    state.name = d.data;
+    state.since = performance.now();
+    state.seen = true;
+    for (var i = 0; i < stateListeners.length; i++) {
+      try { stateListeners[i](state.name, prev); } catch (err) { /* keep other listeners alive */ }
+    }
+  });
+
+  function currentState() {
+    // "complete" is a moment, not a mode: fall back to idle after a few seconds.
+    if (state.name === 'complete' && performance.now() - state.since > 4000) return 'idle';
+    return state.name;
+  }
+
+  // ------------------------------------------------------------------ terminal telemetry
+  var tel = { bytes: 0, activity: 'idle', level: 0, started: false };
+  function telemetry() {
+    if (!tel.started) {
+      tel.started = true;
+      subscribe('telemetry', 'bytesPerSec', function (v) { tel.bytes = Number(v) || 0; });
+      subscribe('telemetry', 'activity', function (v) { tel.activity = v || 'idle'; });
+    }
+    return tel;
+  }
+
+  // 0..1 terminal energy, log-scaled bytes plus the activity level, smoothed by the caller's dt.
+  function telemetryLevel(dt) {
+    var target = Math.min(1, Math.log(1 + tel.bytes) / Math.log(1 + 200000)) * 0.75 +
+      (tel.activity === 'high' ? 0.35 : tel.activity === 'low' ? 0.15 : 0);
+    tel.level += (Math.min(1, target) - tel.level) * (1 - Math.exp(-(dt || 0.016) / 0.5));
+    return tel.level;
+  }
+
+  // ------------------------------------------------------------------ Claude Code hook events
+  // event.events is a ring buffer of the last ~200 hook payloads from every session; callers only
+  // want what is new, so entries are de-duplicated by timestamp, hook, tool and session.
+  var evSeen = {}, evQueue = [], evListeners = [], evStarted = false;
+  function eventKey(e) { return [e._ts, e._hook || e.hook_event_name, e.tool_name, e._session || e.session_id].join('|'); }
+  function onEvents(cb) {
+    evListeners.push(cb);
+    if (evStarted) return;
+    evStarted = true;
+    var first = true;
+    subscribe('event', 'events', function (v) {
+      var list = Array.isArray(v) ? v : v && typeof v === 'object' ? Object.keys(v).map(function (k) { return v[k]; }) : [];
+      var fresh = [];
+      for (var i = 0; i < list.length; i++) {
+        var e = list[i];
+        if (!e || typeof e !== 'object') continue;
+        var k = eventKey(e);
+        if (evSeen[k]) continue;
+        evSeen[k] = true;
+        evQueue.push(k);
+        fresh.push(e);
+      }
+      while (evQueue.length > 800) delete evSeen[evQueue.shift()];
+      var history = first;
+      first = false;
+      if (fresh.length) for (var j = 0; j < evListeners.length; j++) {
+        try { evListeners[j](fresh, history); } catch (err) { /* keep other listeners alive */ }
+      }
+    });
+  }
+
+  // A failure is read from the tool's response or the hook name, never from its input
+  // (a command that merely contains the word "error" is not a failure).
+  function isFailure(e) {
+    var hook = String(e.hook_event_name || e._hook || '');
+    if (/fail|error/i.test(hook)) return true;
+    var r = e.tool_response;
+    if (!r || typeof r !== 'object') return false;
+    if (r.is_error === true || r.isError === true || r.success === false || r.interrupted === true) return true;
+    var code = r.exitCode !== undefined ? r.exitCode : r.exit_code !== undefined ? r.exit_code : r.code;
+    if (typeof code === 'number' && code !== 0) return true;
+    return typeof r.error === 'string' && r.error.length > 0;
+  }
+
+  function toolLabel(name) {
+    name = String(name || '?');
+    if (name.indexOf('mcp__') !== 0) return name;
+    // mcp__plugin_chrome-devtools-mcp_chrome-devtools__take_screenshot -> chrome-devtools
+    var server = name.split('__')[1] || 'mcp';
+    server = server.replace(/^plugin_/, '').replace(/^claude_ai_/, '').split('_').pop();
+    return 'mcp:' + server;
+  }
+
+  // ------------------------------------------------------------------ canvas + loop
+  // Paused while off screen (hidden tab) or while the whole page is hidden; both must clear to resume.
+  var onScreen = true, pageVisible = !document.hidden, watching = false;
+  function visibleNow() { return onScreen && pageVisible; }
+  function watch(el) {
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver(function (entries) { onScreen = entries[entries.length - 1].isIntersecting; }).observe(el);
+    }
+    if (!watching) {
+      watching = true;
+      document.addEventListener('visibilitychange', function () { pageVisible = !document.hidden; });
+    }
+  }
+
+  function surface(el) {
+    var s = { el: el, ctx: el.getContext('2d'), w: 0, h: 0, dpr: 1, resized: true };
+    s.fit = function () {
+      var dpr = Math.min(2, window.devicePixelRatio || 1);
+      var w = Math.max(1, el.clientWidth), h = Math.max(1, el.clientHeight);
+      if (w !== s.w || h !== s.h || dpr !== s.dpr) {
+        s.w = w; s.h = h; s.dpr = dpr;
+        el.width = Math.round(w * dpr);
+        el.height = Math.round(h * dpr);
+        s.resized = true;
+      }
+      s.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return s;
+    };
+    watch(el);
+    return s;
+  }
+
+  function loop(fn, fpsCap) {
+    var last = 0, lastDraw = 0, logged = false, cap = fpsCap || 60;
+    function frame(now) {
+      requestAnimationFrame(frame);
+      if (!visibleNow()) { last = 0; return; }
+      if (now - lastDraw < 1000 / cap - 2) return;
+      var dt = last ? Math.min((now - last) / 1000, 0.1) : 1 / 60;
+      last = lastDraw = now;
+      try { fn(dt, now / 1000); } catch (e) {
+        if (!logged) { logged = true; console.error('[cyber-kit]', e); }
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function resetCtx(ctx) {
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+  }
+
+  // ------------------------------------------------------------------ small utils
+  function hash(str) {
+    var h = 2166136261;
+    str = String(str);
+    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return ((h >>> 0) % 100000) / 100000;
+  }
+
+  function prng(seed) {
+    var a = (seed * 4294967296) >>> 0 || 1;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      var t = Math.imul(a ^ (a >>> 15), a | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function fmtBytes(b) {
+    if (hasSdk && moltamp.fmt && moltamp.fmt.bytes) return moltamp.fmt.bytes(b);
+    var u = ['B', 'KB', 'MB', 'GB'], i = 0;
+    while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+    return b.toFixed(i ? 1 : 0) + ' ' + u[i];
+  }
+
+  // Skin switches update CSS variables live; re-resolve once a second.
+  poll(1000, refreshColors);
+
+  return {
+    c: c, rgb: rgb, rgba: rgba, mix: mix, lum: lum, refreshColors: refreshColors,
+    poll: poll, subscribe: subscribe, call: call, font: font,
+    state: currentState, stateInfo: state, onState: function (cb) { stateListeners.push(cb); },
+    telemetry: telemetry, telemetryLevel: telemetryLevel,
+    onEvents: onEvents, isFailure: isFailure, toolLabel: toolLabel,
+    surface: surface, loop: loop, resetCtx: resetCtx, isVisible: visibleNow,
+    hash: hash, prng: prng, fmtBytes: fmtBytes,
+    meta: (hasSdk && moltamp.meta) || { context: 'panel' }
+  };
+})();
+
+// Year in Space: stats.read lifetime aggregates (dailyActivity / dailyDetail) as a spiral star chart, one turn per month.
+(function () {
+  'use strict';
+  var S = CK.surface(document.getElementById('cy-canvas'));
+  var label = document.getElementById('cy-label');
+  var METRICS = [['messages', 'messages', 'magenta'], ['tools', 'tool calls', 'cyan'], ['sessions', 'sessions', 'yellow']];
+  var DAY = 86400e3, PER_TURN = 30.44;
+  var mi = 0, days = [], totals = {}, hover = null, stars = [], rot = 0, t = 0, lastText = '', loaded = false;
+
+  function num(v) { var n = typeof v === 'string' ? parseFloat(v) : v; return typeof n === 'number' && isFinite(n) ? n : null; }
+  function dayKey(ms) { var d = new Date(ms); return d.getFullYear() + '-' + ('0' + (d.getMonth() + 1)).slice(-2) + '-' + ('0' + d.getDate()).slice(-2); }
+
+  // Two shapes seen in the wild: MOLTamp's { date: n } map plus dailyDetail, or Claude Code's [{ date, messageCount, ... }].
+  function parse(s) {
+    var map = {};
+    function at(k) { return map[k] || (map[k] = { messages: 0, tools: 0, sessions: 0, any: 0 }); }
+    var da = s.dailyActivity, dd = s.dailyDetail;
+    if (Array.isArray(da)) {
+      da.forEach(function (x) {
+        if (!x || !x.date) return;
+        var e = at(String(x.date).slice(0, 10));
+        e.messages = num(x.messageCount) || 0; e.sessions = num(x.sessionCount) || 0; e.tools = num(x.toolCallCount) || 0;
+      });
+    } else if (da && typeof da === 'object') {
+      Object.keys(da).forEach(function (k) { at(k.slice(0, 10)).any = num(da[k]) || 0; });
+    }
+    if (dd && typeof dd === 'object' && !Array.isArray(dd)) {
+      Object.keys(dd).forEach(function (k) {
+        var x = dd[k] || {}, e = at(k.slice(0, 10));
+        e.messages = num(x.messages) || e.messages; e.sessions = num(x.sessions) || e.sessions; e.tools = num(x.toolCalls) || e.tools;
+      });
+    }
+    var keys = Object.keys(map).filter(function (k) { return /^\d{4}-\d{2}-\d{2}$/.test(k); }).sort();
+    if (!keys.length) return null;
+    // From the first active day (at most a year back) to today, inactive days included so the arm stays continuous.
+    var today = Date.parse(dayKey(Date.now()) + 'T12:00:00'), first = Math.max(Date.parse(keys[0] + 'T12:00:00'), today - 365 * DAY);
+    var out = [];
+    for (var ms = first; ms <= today + 1; ms += DAY) {
+      var k = dayKey(ms), e = map[k] || { messages: 0, tools: 0, sessions: 0, any: 0 };
+      if (!e.messages && e.any) e.messages = e.any;
+      out.push({ key: k, ms: ms, messages: e.messages, tools: e.tools, sessions: e.sessions, active: e.messages + e.tools + e.sessions + e.any > 0 });
+    }
+    return out;
+  }
+
+  function streaks(list) {
+    var best = { len: 0, end: -1 }, run = 0;
+    for (var i = 0; i < list.length; i++) {
+      run = list[i].active ? run + 1 : 0;
+      if (run > best.len) best = { len: run, end: i };
+    }
+    var cur = 0;
+    for (i = list.length - 1; i >= 0 && list[i].active; i--) cur++;
+    // Today not started yet: the streak still counts up to yesterday.
+    if (!cur && list.length > 1) for (i = list.length - 2; i >= 0 && list[i].active; i--) cur++;
+    return { best: best, current: cur };
+  }
+
+  function read() {
+    CK.call('stats.read').then(function (s) {
+      s = s || {};
+      var list = parse(s);
+      loaded = true;
+      if (!list) { days = []; return; }
+      days = list;
+      var st = streaks(list);
+      totals = {
+        sessions: num(s.totalSessions), messages: num(s.totalMessages), tokens: num(s.totalTokens),
+        best: num(s.longestStreak) || st.best.len, current: num(s.currentStreak) !== null ? num(s.currentStreak) : st.current,
+        bestEnd: st.best.end, bestLen: st.best.len, active: list.filter(function (d) { return d.active; }).length
+      };
+    }).catch(function () { loaded = true; });
+  }
+  read();
+  // Lifetime aggregates move slowly.
+  CK.poll(60000, read);
+
+  var canvas = document.getElementById('cy-canvas');
+  canvas.addEventListener('click', function (e) { if (e.button === 0) mi = (mi + 1) % METRICS.length; });
+  canvas.addEventListener('pointermove', function (e) {
+    var r = canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top, best = null, bd = 14;
+    stars.forEach(function (s) { var d = Math.hypot(s.x - x, s.y - y); if (s.day.active && d < bd) { bd = d; best = s; } });
+    hover = best ? best.day : null;
+  });
+  canvas.addEventListener('pointerleave', function () { hover = null; });
+
+  function kfmt(n) { return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e4 ? Math.round(n / 1e3) + 'k' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'k' : String(Math.round(n)); }
+  var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+  CK.loop(function (dt) {
+    S.fit();
+    S.resized = false;
+    var ctx = S.ctx, w = S.w, h = S.h, light = CK.lum('bg') > 0.5;
+    t += dt;
+    rot += dt * 0.02;
+    ctx.fillStyle = CK.c.bg;
+    ctx.fillRect(0, 0, w, h);
+
+    if (!days.length) {
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = CK.font(Math.max(9, Math.min(w, h) / 16));
+      ctx.fillStyle = CK.rgba('dim', 0.85);
+      ctx.fillText(loaded ? 'no history from MOLTamp yet' : '観測中 · reading the stars…', w / 2, h / 2);
+      CK.resetCtx(ctx);
+      var t0 = '宇宙年鑑 · ' + (loaded ? 'no history' : 'loading');
+      if (t0 !== lastText) { lastText = t0; label.textContent = t0; }
+      return;
+    }
+
+    var metric = METRICS[mi], key = metric[0], maxV = 1;
+    days.forEach(function (d) { maxV = Math.max(maxV, d[key]); });
+    // Panels keep two rows of readouts under the disc; wide slots show the disc almost edge-on, readouts aside.
+    var wide = w > h * 1.8, gridH = !wide && h > 200 ? 2 * Math.max(9, Math.min(15, w / 22)) * 2.3 + 28 : 0, avail = h - gridH;
+    var cx = wide ? w * 0.36 : w / 2, cy = wide ? h * 0.5 : avail * 0.5;
+    var rx = wide ? w * 0.3 : Math.min(w * 0.46, avail * 0.75), ry = wide ? h * 0.4 : Math.min(rx * 0.62, avail * 0.44);
+    var r0 = 0.12;
+
+    // Faint arm guide
+    ctx.strokeStyle = CK.rgba('dim', 0.12);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    for (var g = 0; g <= days.length; g += 2) {
+      var ga = g / PER_TURN * 6.283 + rot, gr = r0 + (1 - r0) * g / days.length;
+      var gx = cx + Math.cos(ga) * rx * gr, gy = cy + Math.sin(ga) * ry * gr;
+      if (g === 0) ctx.moveTo(gx, gy); else ctx.lineTo(gx, gy);
+    }
+    ctx.stroke();
+
+    stars = [];
+    days.forEach(function (d, i) {
+      var a = i / PER_TURN * 6.283 + rot, rr = r0 + (1 - r0) * i / days.length;
+      stars.push({ x: cx + Math.cos(a) * rx * rr, y: cy + Math.sin(a) * ry * rr, day: d, i: i });
+    });
+
+    // Streak constellations: consecutive active days are linked; the best streak glows.
+    var bestStart = totals.bestEnd - totals.bestLen + 1;
+    for (var i = 1; i < stars.length; i++) {
+      if (!stars[i].day.active || !stars[i - 1].day.active) continue;
+      var inBest = i > bestStart && i <= totals.bestEnd;
+      ctx.strokeStyle = inBest ? CK.rgba('accent', 0.75) : CK.rgba('text', 0.22);
+      ctx.lineWidth = inBest ? 1.6 : 0.8;
+      ctx.beginPath(); ctx.moveTo(stars[i - 1].x, stars[i - 1].y); ctx.lineTo(stars[i].x, stars[i].y); ctx.stroke();
+    }
+
+    ctx.globalCompositeOperation = light ? 'source-over' : 'lighter';
+    var unit = Math.min(w, h) / 300;
+    stars.forEach(function (s) {
+      var d = s.day, v = d[key];
+      if (!d.active) {
+        ctx.fillStyle = CK.rgba('dim', 0.25);
+        ctx.fillRect(s.x - 0.5, s.y - 0.5, 1, 1);
+        return;
+      }
+      var k = Math.log(1 + v) / Math.log(1 + maxV), size = (0.8 + 4.2 * k) * Math.max(0.7, unit);
+      var tw = 0.85 + 0.15 * Math.sin(t * 2 + s.i * 1.7);
+      var glow = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, size * 3);
+      glow.addColorStop(0, CK.rgba(metric[2], (0.25 + 0.5 * k) * tw));
+      glow.addColorStop(1, CK.rgba(metric[2], 0));
+      ctx.fillStyle = glow;
+      ctx.beginPath(); ctx.arc(s.x, s.y, size * 3, 0, 6.283); ctx.fill();
+      ctx.fillStyle = CK.mix(metric[2], 'fg', 0.6, 0.6 + 0.4 * k);
+      ctx.beginPath(); ctx.arc(s.x, s.y, Math.max(0.7, size * 0.45), 0, 6.283); ctx.fill();
+    });
+    ctx.globalCompositeOperation = 'source-over';
+
+    // Today pulses at the rim
+    var now = stars[stars.length - 1], pulse = (t * 0.8) % 1;
+    ctx.strokeStyle = CK.rgba('green', 1 - pulse);
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(now.x, now.y, 3 + pulse * 12, 0, 6.283); ctx.stroke();
+
+    // Month ticks on the outer turn
+    if (h > 120) {
+      ctx.font = CK.font(8);
+      ctx.fillStyle = CK.rgba('dim', 0.75);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      stars.forEach(function (s) {
+        if (s.day.key.slice(8) !== '01' || s.i < days.length - PER_TURN * 1.2) return;
+        var dx = s.x - cx, dy = s.y - cy, dl = Math.hypot(dx, dy) || 1;
+        ctx.fillText(MONTHS[+s.day.key.slice(5, 7) - 1], s.x + dx / dl * 14, s.y + dy / dl * 10);
+      });
+    }
+
+    // Side / bottom readout
+    var lines = [
+      [kfmt(totals.sessions || 0), 'sessions'], [kfmt(totals.messages || 0), 'messages'],
+      [String(totals.current || 0) + 'd', 'streak'], [String(totals.best || 0) + 'd', 'best streak'], [String(totals.active) + 'd', 'active']
+    ];
+    if (totals.tokens) lines.splice(2, 0, [kfmt(totals.tokens), 'tokens']);
+    var size = Math.max(9, Math.min(15, (wide ? h / 9 : w / 22)));
+    ctx.textBaseline = 'top';
+    if (wide) {
+      var lx = w * 0.72, ly = Math.max(6, (h - lines.length * size * 1.35) / 2);
+      lines.forEach(function (l, j) {
+        if (ly + j * size * 1.35 + size > h - 18) return;
+        ctx.textAlign = 'right';
+        ctx.font = CK.font(size, 'bold');
+        ctx.fillStyle = CK.c.text;
+        ctx.fillText(l[0], lx, ly + j * size * 1.35);
+        ctx.textAlign = 'left';
+        ctx.font = CK.font(size * 0.75);
+        ctx.fillStyle = CK.c.dim;
+        ctx.fillText(l[1], lx + 6, ly + j * size * 1.35 + size * 0.2);
+      });
+    } else if (h > 200) {
+      var cols = 3, cw = (w - 16) / cols, by = h - 28 - Math.ceil(lines.length / cols) * size * 2.3;
+      lines.forEach(function (l, j) {
+        var x = 8 + (j % cols) * cw, y = by + Math.floor(j / cols) * size * 2.3;
+        ctx.textAlign = 'left';
+        ctx.font = CK.font(size, 'bold');
+        ctx.fillStyle = CK.c.text;
+        ctx.fillText(l[0], x, y);
+        ctx.font = CK.font(size * 0.7);
+        ctx.fillStyle = CK.c.dim;
+        ctx.fillText(l[1], x, y + size * 1.05);
+      });
+    }
+
+    // Tooltip of the hovered day
+    if (hover) {
+      var hs = stars.filter(function (s) { return s.day === hover; })[0];
+      if (hs) {
+        var tip = [hover.key, kfmt(hover.messages) + ' messages', kfmt(hover.tools) + ' tool calls', hover.sessions + ' sessions'];
+        ctx.font = CK.font(9);
+        var tw2 = Math.max.apply(null, tip.map(function (x) { return ctx.measureText(x).width; })) + 12, th = tip.length * 12 + 8;
+        var tx = Math.min(w - tw2 - 4, Math.max(4, hs.x + 10)), ty = Math.min(h - th - 4, Math.max(4, hs.y - th - 6));
+        ctx.fillStyle = CK.rgba('bg', 0.92);
+        ctx.fillRect(tx, ty, tw2, th);
+        ctx.strokeStyle = CK.rgba(metric[2], 0.8);
+        ctx.strokeRect(tx + 0.5, ty + 0.5, tw2 - 1, th - 1);
+        ctx.textAlign = 'left';
+        tip.forEach(function (x, j) { ctx.fillStyle = j ? CK.c.text : CK.c[metric[2]]; ctx.fillText(x, tx + 6, ty + 5 + j * 12); });
+      }
+    }
+    CK.resetCtx(ctx);
+
+    var text = '宇宙年鑑 · ' + metric[1] + (w > 420 ? ' · ' + totals.active + ' active days' : '') + ' · best ' + (totals.best || 0) + 'd';
+    if (text !== lastText) { lastText = text; label.textContent = text; }
+  });
+})();
+</script>

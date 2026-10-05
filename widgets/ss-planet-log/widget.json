@@ -1,0 +1,18 @@
+{
+  "id": "ss-planet-log",
+  "name": "Planet Log",
+  "version": "1.0.0",
+  "description": "Every task Claude finishes is a hyperspace jump to a new procedurally generated planet, named and logged after the prompt or commit that got you there. The catalogue of discovered worlds is kept between sessions: click the left or right half to browse it.",
+  "author": "j0j0",
+  "category": "Starship",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "event.events",
+      "event.eventCount",
+      "git.status"
+    ]
+  }
+}

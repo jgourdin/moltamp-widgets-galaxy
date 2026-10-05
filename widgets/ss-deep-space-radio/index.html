@@ -1,0 +1,1011 @@
+<!--
+  Deep Space Radio — Starship pack for MOLTamp
+  A generative ambient space soundtrack that follows Claude: slow pads while it rests, soft bells while it thinks, an arpeggio while it writes, gentle percussion and tool accents while it works, a polite chime when it needs you. Everything is synthesized live, nothing is downloaded. MOLTamp's visualizers hear it too, so the whole galaxy dances to Claude's music. Click to tune in or switch off, scroll to set the volume.
+  Author: j0j0 · License: MIT
+-->
+<div id="cy-root"><canvas id="cy-canvas"></canvas><div id="cy-label"></div></div>
+
+<style>
+  #cy-root { position: absolute; inset: 0; overflow: hidden; background: var(--c-chrome-bg); container-type: size; }
+  #cy-canvas { display: block; width: 100%; height: 100%; }
+  #cy-label {
+    position: absolute; left: 8px; bottom: 6px; pointer-events: none; letter-spacing: 0.08em;
+    color: var(--c-chrome-dim); text-shadow: 0 0 6px var(--c-chrome-bg);
+    font: calc(clamp(8px, 3.4cqw, 12px) * var(--user-text-scale, 1)) 'SF Mono', Menlo, 'Hiragino Sans', monospace;
+  }
+</style>
+
+<script>
+// cyber-kit — shared runtime of the Cyberpunk widget pack (MIT, j0j0).
+// Skin colours resolved for canvas use, DPR-aware canvas, pause when hidden, Claude state, telemetry.
+var CK = (function () {
+  'use strict';
+
+  var hasSdk = typeof window.moltamp !== 'undefined';
+
+  // ------------------------------------------------------------------ skin colours
+  var VARS = {
+    bg: '--c-chrome-bg', text: '--c-chrome-text', accent: '--c-chrome-accent', dim: '--c-chrome-dim',
+    border: '--c-chrome-border', fg: '--t-foreground', termBg: '--t-background', red: '--t-red',
+    green: '--t-green', yellow: '--t-yellow', blue: '--t-blue', cyan: '--t-cyan', magenta: '--t-magenta'
+  };
+  // A colour missing from the skin borrows another skin colour, never a hardcoded value.
+  var BORROW = {
+    text: ['fg', 'accent'], fg: ['text', 'accent'], accent: ['text', 'fg'], dim: ['text', 'fg'], border: ['dim', 'text'],
+    bg: ['termBg'], termBg: ['bg'], red: ['magenta', 'accent'], green: ['cyan', 'accent'], yellow: ['accent', 'red'],
+    blue: ['cyan', 'accent'], cyan: ['blue', 'accent'], magenta: ['red', 'accent']
+  };
+  var probeEl = document.createElement('span');
+  probeEl.style.display = 'none';
+  (document.body || document.documentElement).appendChild(probeEl);
+  var pc = document.createElement('canvas');
+  pc.width = pc.height = 1;
+  var pctx = pc.getContext('2d', { willReadFrequently: true });
+  var rgb = {};
+  var c = {};
+
+  // Resolves any CSS colour the skin may use (hex, rgb, var(), color-mix()) to RGB bytes.
+  function readVar(name) {
+    var raw = getComputedStyle(document.documentElement).getPropertyValue(VARS[name]).trim();
+    if (!raw) return null;
+    probeEl.style.color = '';
+    probeEl.style.color = raw;
+    var computed = getComputedStyle(probeEl).color;
+    pctx.fillStyle = '#010203';
+    pctx.fillStyle = computed;
+    if (pctx.fillStyle === '#010203' && computed !== 'rgb(1, 2, 3)') return null;
+    pctx.clearRect(0, 0, 1, 1);
+    pctx.fillRect(0, 0, 1, 1);
+    var d = pctx.getImageData(0, 0, 1, 1).data;
+    return [d[0], d[1], d[2]];
+  }
+
+  function refreshColors() {
+    var name, raw = {};
+    for (name in VARS) raw[name] = readVar(name);
+    for (name in VARS) {
+      var v = raw[name], chain = BORROW[name] || [];
+      for (var i = 0; !v && i < chain.length; i++) v = raw[chain[i]];
+      if (!v) {
+        // Last resort: the host's own text colour, still a skin value.
+        probeEl.style.color = '';
+        var m = /(\d+)\D+(\d+)\D+(\d+)/.exec(getComputedStyle(document.body || document.documentElement).color) || [0, 128, 128, 128];
+        v = [+m[1], +m[2], +m[3]];
+      }
+      rgb[name] = v;
+      c[name] = 'rgb(' + v[0] + ',' + v[1] + ',' + v[2] + ')';
+    }
+  }
+  refreshColors();
+
+  function rgba(name, a) {
+    var v = rgb[name] || rgb.text;
+    return 'rgba(' + v[0] + ',' + v[1] + ',' + v[2] + ',' + a + ')';
+  }
+
+  function mix(a, b, t, alpha) {
+    var x = rgb[a] || rgb.text, y = rgb[b] || rgb.text;
+    var r = Math.round(x[0] + (y[0] - x[0]) * t), g = Math.round(x[1] + (y[1] - x[1]) * t), bl = Math.round(x[2] + (y[2] - x[2]) * t);
+    return alpha === undefined ? 'rgb(' + r + ',' + g + ',' + bl + ')' : 'rgba(' + r + ',' + g + ',' + bl + ',' + alpha + ')';
+  }
+
+  function lum(name) {
+    var v = rgb[name] || rgb.text;
+    return (0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]) / 255;
+  }
+
+  // ------------------------------------------------------------------ sdk wrappers
+  // moltamp.poll only: it cleans itself up when the widget unloads (store rule: no raw setInterval).
+  function poll(ms, fn) {
+    if (hasSdk && moltamp.poll) return moltamp.poll(ms, fn);
+    return function () {};
+  }
+
+  function subscribe(store, selector, cb) {
+    if (!hasSdk || !moltamp.subscribe) return function () {};
+    try { return moltamp.subscribe(store, selector, cb) || function () {}; } catch (e) { return function () {}; }
+  }
+
+  function call(channel) {
+    if (!hasSdk || !moltamp.call) return Promise.reject(new Error('no sdk'));
+    try { return Promise.resolve(moltamp.call.apply(moltamp, arguments)); } catch (e) { return Promise.reject(e); }
+  }
+
+  // ------------------------------------------------------------------ text scale (Settings > Display)
+  var textScale = 1;
+  if (hasSdk && moltamp.settings) {
+    moltamp.settings.read().then(function (cfg) {
+      cfg = cfg || {};
+      if (typeof cfg.widgetTextScale === 'number') textScale = cfg.widgetTextScale;
+      document.documentElement.style.setProperty('--user-text-scale', String(textScale));
+    }).catch(function () { /* first run: no settings */ });
+  }
+
+  function font(size, weight) {
+    return (weight || 'normal') + ' ' + Math.max(7, size * textScale).toFixed(1) +
+      'px "SF Mono", Menlo, "Hiragino Sans", "Hiragino Kaku Gothic ProN", monospace';
+  }
+
+  // ------------------------------------------------------------------ Claude shell state
+  var STATES = ['idle', 'thinking', 'streaming', 'tool-use', 'permission', 'error', 'complete'];
+  var state = { name: 'idle', since: performance.now(), seen: false };
+  var stateListeners = [];
+  window.addEventListener('message', function (e) {
+    var d = e.data;
+    if (!d || d.type !== 'moltamp:push' || d.subscriptionId !== 'shell-state' || STATES.indexOf(d.data) < 0) return;
+    var prev = state.name;
+    state.name = d.data;
+    state.since = performance.now();
+    state.seen = true;
+    for (var i = 0; i < stateListeners.length; i++) {
+      try { stateListeners[i](state.name, prev); } catch (err) { /* keep other listeners alive */ }
+    }
+  });
+
+  function currentState() {
+    // "complete" is a moment, not a mode: fall back to idle after a few seconds.
+    if (state.name === 'complete' && performance.now() - state.since > 4000) return 'idle';
+    return state.name;
+  }
+
+  // ------------------------------------------------------------------ terminal telemetry
+  var tel = { bytes: 0, activity: 'idle', level: 0, started: false };
+  function telemetry() {
+    if (!tel.started) {
+      tel.started = true;
+      subscribe('telemetry', 'bytesPerSec', function (v) { tel.bytes = Number(v) || 0; });
+      subscribe('telemetry', 'activity', function (v) { tel.activity = v || 'idle'; });
+    }
+    return tel;
+  }
+
+  // 0..1 terminal energy, log-scaled bytes plus the activity level, smoothed by the caller's dt.
+  function telemetryLevel(dt) {
+    var target = Math.min(1, Math.log(1 + tel.bytes) / Math.log(1 + 200000)) * 0.75 +
+      (tel.activity === 'high' ? 0.35 : tel.activity === 'low' ? 0.15 : 0);
+    tel.level += (Math.min(1, target) - tel.level) * (1 - Math.exp(-(dt || 0.016) / 0.5));
+    return tel.level;
+  }
+
+  // ------------------------------------------------------------------ Claude Code hook events
+  // event.events is a ring buffer of the last ~200 hook payloads from every session; callers only
+  // want what is new, so entries are de-duplicated by timestamp, hook, tool and session.
+  var evSeen = {}, evQueue = [], evListeners = [], evStarted = false;
+  function eventKey(e) { return [e._ts, e._hook || e.hook_event_name, e.tool_name, e._session || e.session_id].join('|'); }
+  function onEvents(cb) {
+    evListeners.push(cb);
+    if (evStarted) return;
+    evStarted = true;
+    var first = true;
+    subscribe('event', 'events', function (v) {
+      var list = Array.isArray(v) ? v : v && typeof v === 'object' ? Object.keys(v).map(function (k) { return v[k]; }) : [];
+      var fresh = [];
+      for (var i = 0; i < list.length; i++) {
+        var e = list[i];
+        if (!e || typeof e !== 'object') continue;
+        var k = eventKey(e);
+        if (evSeen[k]) continue;
+        evSeen[k] = true;
+        evQueue.push(k);
+        fresh.push(e);
+      }
+      while (evQueue.length > 800) delete evSeen[evQueue.shift()];
+      var history = first;
+      first = false;
+      if (fresh.length) for (var j = 0; j < evListeners.length; j++) {
+        try { evListeners[j](fresh, history); } catch (err) { /* keep other listeners alive */ }
+      }
+    });
+  }
+
+  // A failure is read from the tool's response or the hook name, never from its input
+  // (a command that merely contains the word "error" is not a failure).
+  function isFailure(e) {
+    var hook = String(e.hook_event_name || e._hook || '');
+    if (/fail|error/i.test(hook)) return true;
+    var r = e.tool_response;
+    if (!r || typeof r !== 'object') return false;
+    if (r.is_error === true || r.isError === true || r.success === false || r.interrupted === true) return true;
+    var code = r.exitCode !== undefined ? r.exitCode : r.exit_code !== undefined ? r.exit_code : r.code;
+    if (typeof code === 'number' && code !== 0) return true;
+    return typeof r.error === 'string' && r.error.length > 0;
+  }
+
+  function toolLabel(name) {
+    name = String(name || '?');
+    if (name.indexOf('mcp__') !== 0) return name;
+    // mcp__plugin_chrome-devtools-mcp_chrome-devtools__take_screenshot -> chrome-devtools
+    var server = name.split('__')[1] || 'mcp';
+    server = server.replace(/^plugin_/, '').replace(/^claude_ai_/, '').split('_').pop();
+    return 'mcp:' + server;
+  }
+
+  // ------------------------------------------------------------------ canvas + loop
+  // Paused while off screen (hidden tab) or while the whole page is hidden; both must clear to resume.
+  var onScreen = true, pageVisible = !document.hidden, watching = false;
+  function visibleNow() { return onScreen && pageVisible; }
+  function watch(el) {
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver(function (entries) { onScreen = entries[entries.length - 1].isIntersecting; }).observe(el);
+    }
+    if (!watching) {
+      watching = true;
+      document.addEventListener('visibilitychange', function () { pageVisible = !document.hidden; });
+    }
+  }
+
+  function surface(el) {
+    var s = { el: el, ctx: el.getContext('2d'), w: 0, h: 0, dpr: 1, resized: true };
+    s.fit = function () {
+      var dpr = Math.min(2, window.devicePixelRatio || 1);
+      var w = Math.max(1, el.clientWidth), h = Math.max(1, el.clientHeight);
+      if (w !== s.w || h !== s.h || dpr !== s.dpr) {
+        s.w = w; s.h = h; s.dpr = dpr;
+        el.width = Math.round(w * dpr);
+        el.height = Math.round(h * dpr);
+        s.resized = true;
+      }
+      s.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return s;
+    };
+    watch(el);
+    return s;
+  }
+
+  function loop(fn, fpsCap) {
+    var last = 0, lastDraw = 0, logged = false, cap = fpsCap || 60;
+    function frame(now) {
+      requestAnimationFrame(frame);
+      if (!visibleNow()) { last = 0; return; }
+      if (now - lastDraw < 1000 / cap - 2) return;
+      var dt = last ? Math.min((now - last) / 1000, 0.1) : 1 / 60;
+      last = lastDraw = now;
+      try { fn(dt, now / 1000); } catch (e) {
+        if (!logged) { logged = true; console.error('[cyber-kit]', e); }
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function resetCtx(ctx) {
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+  }
+
+  // ------------------------------------------------------------------ small utils
+  function hash(str) {
+    var h = 2166136261;
+    str = String(str);
+    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return ((h >>> 0) % 100000) / 100000;
+  }
+
+  function prng(seed) {
+    var a = (seed * 4294967296) >>> 0 || 1;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      var t = Math.imul(a ^ (a >>> 15), a | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function fmtBytes(b) {
+    if (hasSdk && moltamp.fmt && moltamp.fmt.bytes) return moltamp.fmt.bytes(b);
+    var u = ['B', 'KB', 'MB', 'GB'], i = 0;
+    while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+    return b.toFixed(i ? 1 : 0) + ' ' + u[i];
+  }
+
+  // Skin switches update CSS variables live; re-resolve once a second.
+  poll(1000, refreshColors);
+
+  return {
+    c: c, rgb: rgb, rgba: rgba, mix: mix, lum: lum, refreshColors: refreshColors,
+    poll: poll, subscribe: subscribe, call: call, font: font,
+    state: currentState, stateInfo: state, onState: function (cb) { stateListeners.push(cb); },
+    telemetry: telemetry, telemetryLevel: telemetryLevel,
+    onEvents: onEvents, isFailure: isFailure, toolLabel: toolLabel,
+    surface: surface, loop: loop, resetCtx: resetCtx, isVisible: visibleNow,
+    hash: hash, prng: prng, fmtBytes: fmtBytes,
+    meta: (hasSdk && moltamp.meta) || { context: 'panel' }
+  };
+})();
+
+// Deep Space Radio: a generative ambient soundtrack that follows Claude, synthesized with the Web Audio API.
+(function () {
+  'use strict';
+  var canvas = document.getElementById('cy-canvas');
+  var S = CK.surface(canvas);
+  var label = document.getElementById('cy-label');
+
+  // ---- engine (pure Web Audio, no DOM: unit-tested in Node with a fake AudioContext)
+  var LAYERS = ['pad', 'pings', 'bells', 'arp', 'perc'];
+  // How loud each layer plays in each Claude state (0..1, missing = silent).
+  var MIX = {
+    idle: { pad: 1, pings: 1 },
+    thinking: { pad: 0.8, pings: 0.3, bells: 1, arp: 0.15 },
+    streaming: { pad: 0.7, bells: 0.35, arp: 1, perc: 0.3 },
+    'tool-use': { pad: 0.6, bells: 0.2, arp: 0.7, perc: 1 },
+    permission: { pad: 0.75, pings: 0.4 },
+    error: { pad: 0.5 },
+    complete: { pad: 0.9, pings: 0.6, bells: 0.5 }
+  };
+  var BPM = { idle: 80, thinking: 86, streaming: 94, 'tool-use': 96, permission: 84, error: 82, complete: 88 };
+  // Per-layer trims: the summed worst case stays below the limiter threshold at the default volume.
+  var TRIM = { pad: 0.9, pings: 0.7, bells: 0.8, arp: 0.7, perc: 0.8, fx: 0.8 };
+  // Natural-minor progressions as [chord root offset, quality]; each chord lasts two bars.
+  var PROGRESSIONS = [
+    [[0, 'm'], [8, 'M'], [3, 'M'], [10, 'M']],
+    [[0, 'm'], [5, 'm'], [8, 'M'], [10, 'M']],
+    [[0, 'm'], [10, 'M'], [8, 'M'], [7, 'm']],
+    [[0, 'm'], [3, 'M'], [10, 'M'], [5, 'm']]
+  ];
+  var PENTA = [0, 3, 5, 7, 10];
+  // MAX_VOICES caps one-shot notes; pad chords bypass it (at most 12 more: the current chord plus two ringing out).
+  var MAX_VOICES = 40, XFADE = 0.7;
+
+  function mulberry(seed) {
+    var a = (seed * 4294967296) >>> 0 || 1;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      var x = Math.imul(a ^ (a >>> 15), a | 1);
+      x ^= x + Math.imul(x ^ (x >>> 7), x | 61);
+      return ((x ^ (x >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function mtof(m) { return 440 * Math.pow(2, (m - 69) / 12); }
+
+  function createEngine(ac, seed) {
+    var rnd = mulberry(seed || 0.5);
+    function now() { return ac.currentTime; }
+
+    // Master chain: layers -> mix -> dry + reverb -> makeup -> volume -> limiter -> ceiling -> analyser -> speakers
+    var mix = ac.createGain(), dry = ac.createGain(), send = ac.createGain(), verb = ac.createConvolver(), makeup = ac.createGain();
+    var master = ac.createGain(), limiter = ac.createDynamicsCompressor(), ceiling = ac.createGain(), analyser = ac.createAnalyser();
+    dry.gain.value = 0.8;
+    send.gain.value = 0.35;
+    verb.normalize = true;
+    verb.buffer = impulse(3.2);
+    // Voices are mixed with headroom; +12 dB brings the default volume to a soft background level (~-34 dBFS RMS).
+    makeup.gain.value = 4;
+    master.gain.value = 0;
+    limiter.threshold.value = -6;
+    limiter.knee.value = 0;
+    limiter.ratio.value = 20;
+    limiter.attack.value = 0.002;
+    limiter.release.value = 0.2;
+    ceiling.gain.value = 0.9;
+    analyser.fftSize = 2048;
+    analyser.smoothingTimeConstant = 0.75;
+    mix.connect(dry); mix.connect(send); send.connect(verb);
+    dry.connect(makeup); verb.connect(makeup); makeup.connect(master);
+    master.connect(limiter); limiter.connect(ceiling); ceiling.connect(analyser); analyser.connect(ac.destination);
+
+    var layer = {};
+    LAYERS.forEach(function (n) { var g = ac.createGain(); g.gain.value = 0; g.connect(mix); layer[n] = g; });
+    var fx = ac.createGain();
+    fx.gain.value = TRIM.fx;
+    fx.connect(mix);
+    // Pad bus: one shared low-pass swept by a slow LFO, then a duck gain for the streaming pulse.
+    var padFilter = ac.createBiquadFilter(), duck = ac.createGain(), lfo = ac.createOscillator(), lfoDepth = ac.createGain();
+    padFilter.type = 'lowpass';
+    padFilter.frequency.value = 900;
+    padFilter.Q.value = 0.7;
+    lfo.frequency.value = 0.05;
+    lfoDepth.gain.value = 450;
+    lfo.connect(lfoDepth); lfoDepth.connect(padFilter.frequency);
+    padFilter.connect(duck); duck.connect(layer.pad);
+    lfo.start();
+    var noise = noiseBuffer(1);
+
+    function impulse(sec) {
+      var len = Math.floor(ac.sampleRate * sec), buf = ac.createBuffer(2, len, ac.sampleRate);
+      for (var c = 0; c < 2; c++) {
+        var d = buf.getChannelData(c);
+        for (var i = 0; i < len; i++) d[i] = (rnd() * 2 - 1) * Math.pow(1 - i / len, 2.6);
+      }
+      return buf;
+    }
+    function noiseBuffer(sec) {
+      var len = Math.floor(ac.sampleRate * sec), buf = ac.createBuffer(1, len, ac.sampleRate), d = buf.getChannelData(0);
+      for (var i = 0; i < len; i++) d[i] = rnd() * 2 - 1;
+      return buf;
+    }
+
+    // ---- voices: every one-shot disconnects all its nodes when its last source ends
+    var voices = [], created = 0, released = 0, peakLive = 0;
+    function track(nodes, sources, start, end, peak, bus) {
+      var v = { nodes: nodes, sources: sources, start: start, end: end, peak: peak, bus: bus, done: false };
+      voices.push(v);
+      created += nodes.length;
+      sources[sources.length - 1].onended = function () { finish(v); };
+      var live = voices.length;
+      if (live > peakLive) peakLive = live;
+      return v;
+    }
+    function finish(v) {
+      if (v.done) return;
+      v.done = true;
+      for (var i = 0; i < v.nodes.length; i++) { try { v.nodes[i].disconnect(); } catch (e) { /* already disconnected */ } }
+      released += v.nodes.length;
+    }
+    function sweep() {
+      var t = now();
+      for (var i = voices.length - 1; i >= 0; i--) {
+        var v = voices[i];
+        // Fallback when onended never fires (suspended context, throttled page).
+        if (!v.done && t > v.end + 0.5) finish(v);
+        if (v.done) voices.splice(i, 1);
+      }
+    }
+    function full() { return voices.length >= MAX_VOICES; }
+
+    function env(param, t, a, peak, d) {
+      param.setValueAtTime(0.0001, t);
+      param.linearRampToValueAtTime(peak, t + a);
+      param.exponentialRampToValueAtTime(0.0001, t + a + d);
+      return t + a + d;
+    }
+
+    // ---- instruments
+    var padVoices = [];
+    function padChord(notes, t) {
+      padVoices.forEach(function (v) {
+        v.gains.forEach(function (g) { g.gain.cancelScheduledValues(t); g.gain.setTargetAtTime(0.0001, t, 0.9); });
+        v.sources.forEach(function (s) { s.stop(t + 5); });
+        v.end = t + 5;
+      });
+      padVoices = [];
+      notes.forEach(function (m) {
+        var o1 = ac.createOscillator(), o2 = ac.createOscillator(), g1 = ac.createGain(), g2 = ac.createGain(), g = ac.createGain();
+        o1.type = 'triangle'; o2.type = 'sawtooth';
+        o1.frequency.value = o2.frequency.value = mtof(m);
+        o1.detune.value = -6; o2.detune.value = 7;
+        g1.gain.value = 0.65; g2.gain.value = 0.35;
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.linearRampToValueAtTime(0.045, t + 2.5);
+        o1.connect(g1); o2.connect(g2); g1.connect(g); g2.connect(g); g.connect(padFilter);
+        o1.start(t); o2.start(t);
+        var v = track([o1, o2, g1, g2, g], [o1, o2], t, Infinity, 0.045, 'pad');
+        v.gains = [g];
+        padVoices.push(v);
+      });
+    }
+
+    function bell(t, m, peak, bus, decay) {
+      if (full()) return;
+      var car = ac.createOscillator(), mod = ac.createOscillator(), idx = ac.createGain(), g = ac.createGain(), f = mtof(m);
+      car.frequency.value = f;
+      mod.frequency.value = f * 3.5;
+      idx.gain.setValueAtTime(f * 1.6, t);
+      idx.gain.exponentialRampToValueAtTime(f * 0.05, t + (decay || 1.8));
+      mod.connect(idx); idx.connect(car.frequency); car.connect(g); g.connect(bus === 'fx' ? fx : layer[bus]);
+      var end = env(g.gain, t, 0.003, peak, decay || 1.8);
+      car.start(t); mod.start(t); car.stop(end + 0.05); mod.stop(end + 0.05);
+      track([car, mod, idx, g], [mod, car], t, end + 0.05, peak, bus);
+    }
+
+    function pluck(t, m, peak, bus, dur, type) {
+      if (full()) return;
+      var o = ac.createOscillator(), lp = ac.createBiquadFilter(), g = ac.createGain();
+      o.type = type || 'sawtooth';
+      o.frequency.value = mtof(m);
+      lp.type = 'lowpass';
+      lp.frequency.setValueAtTime(2600, t);
+      lp.frequency.exponentialRampToValueAtTime(380, t + dur);
+      o.connect(lp); lp.connect(g); g.connect(bus === 'fx' ? fx : layer[bus]);
+      var end = env(g.gain, t, 0.004, peak, dur);
+      o.start(t); o.stop(end + 0.05);
+      track([o, lp, g], [o], t, end + 0.05, peak, bus);
+    }
+
+    function ping(t, m) {
+      if (full()) return;
+      var o = ac.createOscillator(), o2 = ac.createOscillator(), g2 = ac.createGain(), g = ac.createGain();
+      o.frequency.value = mtof(m);
+      o2.frequency.value = mtof(m + 12);
+      g2.gain.value = 0.3;
+      o.connect(g); o2.connect(g2); g2.connect(g); g.connect(layer.pings);
+      var end = env(g.gain, t, 0.006, 0.07, 3.6);
+      o.start(t); o2.start(t); o.stop(end + 0.05); o2.stop(end + 0.05);
+      track([o, o2, g2, g], [o2, o], t, end + 0.05, 0.07 * 1.3, 'pings');
+    }
+
+    function kick(t, peak) {
+      if (full()) return;
+      var o = ac.createOscillator(), g = ac.createGain();
+      o.frequency.setValueAtTime(110, t);
+      o.frequency.exponentialRampToValueAtTime(42, t + 0.25);
+      o.connect(g); g.connect(layer.perc);
+      var end = env(g.gain, t, 0.002, peak, 0.35);
+      o.start(t); o.stop(end + 0.05);
+      track([o, g], [o], t, end + 0.05, peak, 'perc');
+    }
+
+    function hiss(t, peak, bus, hz, kind, d) {
+      if (full()) return;
+      var src = ac.createBufferSource(), f = ac.createBiquadFilter(), g = ac.createGain();
+      src.buffer = noise;
+      f.type = kind;
+      f.frequency.value = hz;
+      if (kind === 'bandpass') f.Q.value = 4;
+      src.connect(f); f.connect(g); g.connect(bus === 'fx' ? fx : layer[bus]);
+      var end = env(g.gain, t, 0.001, peak, d);
+      src.start(t, rnd() * 0.8, d + 0.1);
+      src.stop(end + 0.05);
+      track([src, f, g], [src], t, end + 0.05, peak, bus);
+    }
+
+    function rise(t, m) {
+      if (full()) return;
+      var o = ac.createOscillator(), lp = ac.createBiquadFilter(), g = ac.createGain();
+      o.type = 'triangle';
+      o.frequency.setValueAtTime(mtof(m), t);
+      o.frequency.exponentialRampToValueAtTime(mtof(m + 12), t + 0.6);
+      lp.type = 'lowpass';
+      lp.frequency.setValueAtTime(600, t);
+      lp.frequency.exponentialRampToValueAtTime(3200, t + 0.6);
+      o.connect(lp); lp.connect(g); g.connect(fx);
+      var end = env(g.gain, t, 0.18, 0.06, 0.6);
+      o.start(t); o.stop(end + 0.05);
+      track([o, lp, g], [o], t, end + 0.05, 0.06, 'fx');
+    }
+
+    // ---- music state
+    var state = 'idle', bpm = BPM.idle, running = false, vol = 0.4;
+    var levels = {}, lastT = 0, nextTime = 0, step = 0, bar = 0;
+    var root = 57, prog = PROGRESSIONS[0], chord = [0, 'm'], chordTones = [0, 3, 7];
+    var pending = { error: false, cadence: false, chime: false }, accents = [];
+    LAYERS.forEach(function (n) { levels[n] = 0; });
+
+    function applyMix(t, immediate) {
+      var m = MIX[state];
+      LAYERS.forEach(function (n) {
+        var target = (m[n] || 0) * TRIM[n];
+        if (immediate) { layer[n].gain.setValueAtTime(target, t); levels[n] = m[n] || 0; }
+        else layer[n].gain.setTargetAtTime(target, t, XFADE);
+      });
+    }
+    applyMix(0, true);
+
+    function setState(s) {
+      if (!MIX[s]) s = 'idle';
+      if (s === state) return;
+      state = s;
+      applyMix(now(), false);
+      if (s === 'error') pending.error = true;
+      if (s === 'complete') pending.cadence = true;
+      if (s === 'permission') pending.chime = true;
+    }
+
+    // Two polite notes, a fifth falling to the root.
+    function chime(t, spb) {
+      bell(t, root + 19, 0.06, 'fx', 1.4);
+      bell(t + spb / 2, root + 12, 0.06, 'fx', 1.6);
+    }
+
+    function chordNotes(base) {
+      return chordTones.map(function (x) { return base + chord[0] + x; });
+    }
+
+    // One sixteenth note at time t.
+    function play(t, beat) {
+      var s = step % 16, spb = 60 / bpm;
+      if (s === 0) {
+        if (bar % 16 === 0 && bar > 0) {
+          // Drift the key by a fourth, a fifth or a third, kept between E3 and C4.
+          root += [5, 7, -3, 3, -5][Math.floor(rnd() * 5)];
+          while (root > 60) root -= 12;
+          while (root < 52) root += 12;
+        }
+        if (bar % 8 === 0) prog = PROGRESSIONS[Math.floor(rnd() * PROGRESSIONS.length)];
+        if (bar % 2 === 0) {
+          chord = prog[(bar / 2) % prog.length];
+          chordTones = chord[1] === 'm' ? [0, 3, 7] : [0, 4, 7];
+          var r = root - 12 + chord[0];
+          while (r > 52) r -= 12;
+          padChord([r, r + 7, r + 12 + chordTones[1], r + 19], t);
+          if (state === 'permission' && !pending.chime) chime(t, spb);
+        }
+        if (levels.pings > 0.05 && rnd() < 0.4) ping(t + rnd() * spb, root + 24 + PENTA[Math.floor(rnd() * 5)]);
+      }
+      if (levels.bells > 0.05 && s % 2 === 0 && rnd() < 0.22) {
+        var pool = rnd() < 0.6 ? chordNotes(root + 12) : PENTA.map(function (x) { return root + 12 + x; });
+        bell(t, pool[Math.floor(rnd() * pool.length)] + (rnd() < 0.4 ? 12 : 0), 0.1, 'bells');
+      }
+      if (levels.arp > 0.05) {
+        var tones = chordNotes(root), seq = [0, 1, 2, 3, 2, 1], k = seq[step % seq.length];
+        var note = k === 3 ? tones[0] + 12 : tones[k];
+        pluck(t, note + 12, s % 4 === 0 ? 0.09 : 0.06, 'arp', 0.32, 'triangle');
+        if (s % 4 === 0 && levels.arp > 0.4) {
+          duck.gain.setValueAtTime(1, t);
+          duck.gain.linearRampToValueAtTime(0.75, t + 0.02);
+          duck.gain.linearRampToValueAtTime(1, t + spb * 0.8);
+        }
+      }
+      if (levels.perc > 0.05) {
+        if (s === 0 || s === 8 || (s === 10 && rnd() < 0.3)) kick(t, 0.32);
+        if (s % 4 === 2) hiss(t, 0.06, 'perc', 7500, 'highpass', 0.05);
+        else if (s % 2 === 1 && rnd() < 0.25) hiss(t, 0.025, 'perc', 8000, 'highpass', 0.03);
+      }
+      if (beat && pending.chime) {
+        pending.chime = false;
+        if (state === 'permission') chime(t, spb);
+      }
+      if (beat && pending.error) {
+        // A soft tritone that resolves to the tonic: an error, not an alarm.
+        pending.error = false;
+        pluck(t, root + 12, 0.05, 'fx', 0.6);
+        pluck(t, root + 18, 0.05, 'fx', 0.6);
+        [0, 3, 7].forEach(function (x) { bell(t + spb * 1.5, root + 12 + x, 0.045, 'fx', 2.2); });
+      }
+      if (beat && pending.cadence) {
+        // Dominant arpeggio up, then the tonic: the task landed.
+        pending.cadence = false;
+        [7, 11, 14].forEach(function (x, i) { bell(t + i * spb / 2, root + 12 + x, 0.055, 'fx', 1.2); });
+        [12, 15, 19].forEach(function (x, i) { bell(t + spb * 1.5 + i * spb / 2, root + 12 + x, 0.055, 'fx', 2); });
+      }
+      if (accents.length) {
+        var a = accents.shift();
+        if (a === 'bash') pluck(t, root - 12 + chord[0], 0.07, 'fx', 0.5);
+        else if (a === 'edit') bell(t, root + 24 + PENTA[Math.floor(rnd() * 5)], 0.05, 'fx', 1);
+        else if (a === 'read') hiss(t, 0.05, 'fx', 3200, 'bandpass', 0.03);
+        else if (a === 'agent') rise(t, root + 12);
+        else bell(t, root + 31, 0.035, 'fx', 0.6);
+      }
+      if (s === 15) bar++;
+    }
+
+    function tick(horizon) {
+      if (!running) return;
+      var t = now(), dt = Math.max(0, t - lastT), m = MIX[state];
+      lastT = t;
+      LAYERS.forEach(function (n) { levels[n] += ((m[n] || 0) - levels[n]) * (1 - Math.exp(-dt / XFADE)); });
+      bpm += (BPM[state] - bpm) * Math.min(1, dt / 4);
+      // After a stall (throttled timers), never schedule in the past.
+      if (nextTime < t) nextTime = t + 0.05;
+      while (nextTime < t + horizon) {
+        play(nextTime, step % 4 === 0);
+        nextTime += 60 / bpm / 4;
+        step++;
+      }
+      sweep();
+    }
+
+    function setVolume(v) {
+      vol = Math.max(0, Math.min(1, v));
+      if (running) master.gain.setTargetAtTime(vol * vol, now(), 0.08);
+    }
+
+    function start() {
+      var t = now();
+      running = true;
+      lastT = t;
+      nextTime = t + 0.1;
+      master.gain.cancelScheduledValues(t);
+      master.gain.setValueAtTime(0.0001, t);
+      master.gain.linearRampToValueAtTime(vol * vol, t + 1.5);
+    }
+
+    // Fades out; the caller suspends the context once the fade is over.
+    function stop() {
+      var t = now();
+      running = false;
+      master.gain.cancelScheduledValues(t);
+      master.gain.setTargetAtTime(0.0001, t, 0.1);
+    }
+
+    function accent(kind) { if (running && accents.length < 4) accents.push(kind); }
+
+    return {
+      setState: setState, tick: tick, start: start, stop: stop, setVolume: setVolume, accent: accent, analyser: analyser,
+      bpm: function () { return bpm; }, state: function () { return state; }, voices: voices, levels: levels,
+      stats: function () { return { created: created, released: released, live: voices.length, peakLive: peakLive }; },
+      trim: TRIM, makeup: makeup.gain.value, mixFor: function (s) { return MIX[s]; }, volume: function () { return vol; }
+    };
+  }
+  // ---- end engine
+
+  // Tool families for live accents.
+  function kindOf(tool) {
+    if (/^(Read|Glob|Grep|LS|NotebookRead)$/.test(tool)) return 'read';
+    if (/^(Write|Edit|MultiEdit|NotebookEdit)$/.test(tool)) return 'edit';
+    if (/^(Bash|BashOutput|KillShell|Monitor)$/.test(tool)) return 'bash';
+    if (/^(Agent|Task|Workflow|SendMessage)$/.test(tool)) return 'agent';
+    return 'other';
+  }
+
+  var STATIONS = [['idle', 88.1, 'IDLE'], ['thinking', 91.7, 'THINK'], ['streaming', 96.4, 'STREAM'], ['complete', 99.0, 'DONE'],
+    ['tool-use', 101.2, 'TOOLS'], ['permission', 104.5, 'ASK'], ['error', 107.3, 'ERR']];
+  var ac = null, eng = null, on = false, blocked = false, vol = 0.4, offAt = 0, saveAt = 0, volShownUntil = 0;
+  var dial = 88.1, t = 0, lastText = '', timeData = null, freqData = null, volRect = null, dialRect = null;
+  var hasSettings = !!(window.moltamp && moltamp.settings);
+
+  function station(st) {
+    for (var i = 0; i < STATIONS.length; i++) if (STATIONS[i][0] === st) return STATIONS[i];
+    return STATIONS[0];
+  }
+
+  function ensureEngine() {
+    if (eng || blocked) return !!eng;
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) { blocked = true; return false; }
+    try { ac = new Ctx(); } catch (e) { blocked = true; return false; }
+    eng = createEngine(ac, (Date.now() % 100000) / 100000 + 0.0001);
+    eng.setVolume(vol);
+    eng.setState(CK.state());
+    timeData = new Uint8Array(eng.analyser.fftSize);
+    freqData = new Uint8Array(eng.analyser.frequencyBinCount);
+    return true;
+  }
+
+  function playing() { return !!(eng && on && ac.state === 'running'); }
+
+  function turnOn() {
+    if (!ensureEngine()) return;
+    on = true;
+    offAt = 0;
+    var p = ac.resume();
+    // resume() resolves only once audio is allowed; until then the dial keeps asking for a click.
+    if (p && p.then) p.then(function () { if (on && ac.state === 'running') eng.start(); }).catch(function () { /* still suspended */ });
+  }
+
+  function turnOff() {
+    on = false;
+    if (eng) eng.stop();
+    offAt = performance.now() + 600;
+  }
+
+  function save() { saveAt = performance.now() + 1500; }
+  function flush() {
+    if (!hasSettings) return;
+    moltamp.settings.write({ radio: { on: on, vol: Math.round(vol * 100) / 100 } }).catch(function () { /* best effort */ });
+  }
+
+  // Restore the last volume; if the radio was on, try to resume (allowed when the host lifts the autoplay policy).
+  if (hasSettings) {
+    moltamp.settings.read().then(function (cfg) {
+      var r = cfg && cfg.radio;
+      if (!r) return;
+      if (typeof r.vol === 'number') vol = Math.max(0, Math.min(1, r.vol));
+      if (r.on) turnOn();
+    }).catch(function () { /* first run */ });
+  }
+
+  canvas.addEventListener('click', function (e) {
+    if (e.button !== 0 || e.ctrlKey) return;
+    var r = canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    if (volRect && x >= volRect[0] - 4 && x <= volRect[0] + volRect[2] + 4 && y >= volRect[1] - 6 && y <= volRect[1] + volRect[3] + 6) {
+      vol = Math.max(0, Math.min(1, (x - volRect[0]) / volRect[2]));
+      if (eng) eng.setVolume(vol);
+      volShownUntil = performance.now() + 1500;
+      save();
+      return;
+    }
+    if (playing()) turnOff(); else turnOn();
+    save();
+  });
+  // The wheel turns the volume only over the dial, so scrolling a panel never gets stuck on the radio.
+  canvas.addEventListener('wheel', function (e) {
+    var r = canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    if (!dialRect || x < dialRect[0] || x > dialRect[0] + dialRect[2] || y < dialRect[1] || y > dialRect[1] + dialRect[3]) return;
+    e.preventDefault();
+    vol = Math.max(0, Math.min(1, vol - Math.sign(e.deltaY) * 0.04));
+    if (eng) eng.setVolume(vol);
+    volShownUntil = performance.now() + 1500;
+    save();
+  }, { passive: false });
+
+  CK.onEvents(function (fresh, history) {
+    if (history || !playing()) return;
+    for (var i = 0; i < fresh.length; i++) {
+      var e = fresh[i];
+      if (e.tool_name && /^Pre/i.test(String(e.hook_event_name || e._hook || ''))) eng.accent(kindOf(e.tool_name));
+    }
+  });
+
+  // Scheduler: a long lookahead while the page is hidden, because hidden pages get their timers throttled.
+  CK.poll(50, function () {
+    var pt = performance.now();
+    if (eng) eng.setState(CK.state());
+    if (playing()) eng.tick(document.hidden ? 2.5 : 0.35);
+    if (offAt && pt > offAt) {
+      offAt = 0;
+      if (!on && ac && ac.state === 'running') ac.suspend().catch(function () { /* already closed */ });
+    }
+    if (saveAt && pt > saveAt) { saveAt = 0; flush(); }
+  });
+
+  // ---- drawing
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+
+  function screen(ctx, x, y, w, h, light) {
+    roundRect(ctx, x, y, w, h, Math.min(8, h / 6));
+    ctx.fillStyle = light ? CK.mix('bg', 'fg', 0.06) : CK.mix('bg', 'termBg', 0.5);
+    ctx.fill();
+    ctx.strokeStyle = CK.rgba('dim', 0.35);
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  function drawDial(ctx, x, y, w, h, live, light) {
+    dialRect = [x, y, w, h];
+    screen(ctx, x, y, w, h, light);
+    var st = station(eng ? eng.state() : CK.state()), lo = 87.5, hi = 108.5, pad = 10;
+    var sx = x + pad, sw = w - pad * 2, scaleY = y + h * 0.62;
+    function X(f) { return sx + (f - lo) / (hi - lo) * sw; }
+    // Frequency scale
+    ctx.strokeStyle = CK.rgba('text', live ? 0.55 : 0.3);
+    ctx.lineWidth = 1;
+    for (var f = 88; f <= 108; f += 0.5) {
+      var major = f % 2 === 0, tx = X(f);
+      ctx.beginPath(); ctx.moveTo(tx, scaleY - (major ? 7 : 3)); ctx.lineTo(tx, scaleY); ctx.stroke();
+      if (major && sw > 160 && f % 4 === 0) {
+        ctx.fillStyle = CK.rgba('dim', 0.8);
+        ctx.font = CK.font(Math.max(7, Math.min(9, h * 0.1)));
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText(String(f), tx, scaleY + 2);
+      }
+    }
+    // Stations
+    STATIONS.forEach(function (s) {
+      var on2 = s === st;
+      ctx.fillStyle = on2 ? CK.c.accent : CK.rgba('dim', 0.6);
+      ctx.fillRect(X(s[1]) - 1, scaleY - 12, 2, 4);
+      if (sw > 220 || on2) {
+        ctx.font = CK.font(Math.max(7, Math.min(9, h * 0.09)), on2 ? 'bold' : 'normal');
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(s[2], X(s[1]), scaleY - 13);
+      }
+    });
+    // Needle
+    var nx = X(dial);
+    ctx.strokeStyle = live ? CK.c.red : CK.rgba('red', 0.45);
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(nx, y + 6); ctx.lineTo(nx, y + h - 6); ctx.stroke();
+    if (live) {
+      var g = ctx.createLinearGradient(nx - 12, 0, nx + 12, 0);
+      g.addColorStop(0, CK.rgba('red', 0)); g.addColorStop(0.5, CK.rgba('red', 0.18)); g.addColorStop(1, CK.rgba('red', 0));
+      ctx.fillStyle = g;
+      ctx.fillRect(nx - 12, y + 4, 24, h - 8);
+    }
+    // Readout
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = live ? CK.c.fg : CK.c.dim;
+    var big = Math.max(9, Math.min(15, h * 0.17));
+    ctx.font = CK.font(big, 'bold');
+    ctx.fillText(dial.toFixed(1) + ' MHz', x + pad, y + 5);
+    if (h > 90) {
+      ctx.fillStyle = CK.rgba('dim', live ? 0.85 : 0.5);
+      ctx.font = CK.font(Math.max(7, big * 0.62));
+      ctx.fillText('宇宙ラジオ · DEEP SPACE RADIO', x + pad, y + 9 + big * 1.15);
+    }
+    ctx.textAlign = 'right';
+    ctx.fillStyle = live ? CK.c.green : CK.c.dim;
+    ctx.beginPath(); ctx.arc(x + w - pad - 3, y + 11, 3, 0, 6.283); ctx.fill();
+    ctx.font = CK.font(Math.max(7, Math.min(9, h * 0.1)));
+    ctx.fillText(live ? 'ON AIR' : 'OFF', x + w - pad - 10, y + 6);
+    // Volume bar
+    var vw = Math.min(110, w * 0.42), vx = x + w - pad - vw, vy = y + h - 9;
+    volRect = [vx, vy, vw, 4];
+    ctx.fillStyle = CK.rgba('dim', 0.25);
+    ctx.fillRect(vx, vy, vw, 4);
+    ctx.fillStyle = performance.now() < volShownUntil ? CK.c.accent : CK.rgba('accent', 0.7);
+    ctx.fillRect(vx, vy, vw * vol, 4);
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = CK.rgba('dim', 0.9);
+    ctx.font = CK.font(7);
+    ctx.fillText(performance.now() < volShownUntil ? Math.round(vol * 100) + '%' : 'VOL', vx - 4, vy + 2);
+  }
+
+  function drawScope(ctx, x, y, w, h, live, light) {
+    screen(ctx, x, y, w, h, light);
+    ctx.save();
+    roundRect(ctx, x, y, w, h, Math.min(8, h / 6));
+    ctx.clip();
+    // Graticule
+    ctx.strokeStyle = CK.rgba('green', 0.1);
+    ctx.lineWidth = 1;
+    for (var i = 1; i < 8; i++) { var gx = x + w * i / 8; ctx.beginPath(); ctx.moveTo(gx, y); ctx.lineTo(gx, y + h); ctx.stroke(); }
+    for (i = 1; i < 4; i++) { var gy = y + h * i / 4; ctx.beginPath(); ctx.moveTo(x, gy); ctx.lineTo(x + w, gy); ctx.stroke(); }
+    var mid = y + h / 2;
+    if (live) {
+      eng.analyser.getByteTimeDomainData(timeData);
+      ctx.strokeStyle = CK.c.green;
+      ctx.lineWidth = 1.6;
+      ctx.shadowColor = CK.rgba('green', 0.6);
+      ctx.shadowBlur = light ? 0 : 6;
+      ctx.beginPath();
+      var n = Math.min(timeData.length, 1024);
+      for (i = 0; i < n; i++) {
+        var px = x + i / (n - 1) * w, py = mid + (timeData[i] - 128) / 128 * h * 0.9;
+        if (i) ctx.lineTo(px, py); else ctx.moveTo(px, py);
+      }
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+    } else {
+      // Static between stations
+      ctx.fillStyle = CK.rgba('text', 0.25);
+      for (i = 0; i < Math.min(500, w * h / 60); i++) ctx.fillRect(x + Math.random() * w, y + Math.random() * h, 1, 1);
+      ctx.strokeStyle = CK.rgba('green', 0.35);
+      ctx.beginPath(); ctx.moveTo(x, mid); ctx.lineTo(x + w, mid); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawSpectrum(ctx, x, y, w, h, live, light) {
+    screen(ctx, x, y, w, h, light);
+    var bars = Math.max(8, Math.min(48, Math.floor(w / 7))), bw = (w - 12) / bars;
+    if (live) eng.analyser.getByteFrequencyData(freqData);
+    for (var i = 0; i < bars; i++) {
+      // Log-spaced bins: the music lives below 4 kHz.
+      var lo = Math.floor(Math.pow(i / bars, 2) * 180) + 1, hi = Math.floor(Math.pow((i + 1) / bars, 2) * 180) + 2, v = 0;
+      if (live) { for (var k = lo; k < hi; k++) v = Math.max(v, freqData[k] || 0); v /= 255; }
+      else v = 0.04 + 0.03 * Math.sin(t * 2 + i);
+      var bh = Math.max(2, v * (h - 12)), bx = x + 6 + i * bw;
+      ctx.fillStyle = CK.mix('cyan', 'magenta', i / bars, live ? 0.9 : 0.35);
+      ctx.fillRect(bx, y + h - 6 - bh, Math.max(1, bw - 2), bh);
+    }
+  }
+
+  CK.loop(function (dt) {
+    S.fit();
+    S.resized = false;
+    var ctx = S.ctx, w = S.w, h = S.h, light = CK.lum('bg') > 0.5, live = playing();
+    t += dt;
+    var target = station(eng ? eng.state() : CK.state())[1];
+    dial += (target - dial) * (1 - Math.exp(-dt * 2.5));
+
+    ctx.fillStyle = CK.c.bg;
+    ctx.fillRect(0, 0, w, h);
+    var m = 6, bottom = h - 20, wide = w > h * 1.8, scopeMid;
+    if (wide) {
+      var dw = Math.min(w * 0.32, 360), sw2 = Math.min(w * 0.26, 320);
+      drawDial(ctx, m, m, dw, bottom - m, live, light);
+      drawScope(ctx, m * 2 + dw, m, w - dw - sw2 - m * 4, bottom - m, live, light);
+      drawSpectrum(ctx, w - m - sw2, m, sw2, bottom - m, live, light);
+      scopeMid = (m + bottom) / 2;
+    } else {
+      var hh = bottom - m * 4, dh = Math.max(44, hh * 0.36), sh = (hh - dh) * 0.55;
+      drawDial(ctx, m, m, w - m * 2, dh, live, light);
+      drawScope(ctx, m, m * 2 + dh, w - m * 2, sh, live, light);
+      drawSpectrum(ctx, m, m * 3 + dh + sh, w - m * 2, hh - dh - sh, live, light);
+      scopeMid = m * 2 + dh + sh / 2;
+    }
+    if (!live) {
+      var msg = blocked ? 'AUDIO BLOCKED' : 'CLICK TO TUNE IN 📻';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = CK.font(Math.max(10, Math.min(18, w / 22)), 'bold');
+      var tw = ctx.measureText(msg).width + 24, cy = scopeMid;
+      ctx.fillStyle = CK.rgba('bg', 0.82);
+      ctx.fillRect(w / 2 - tw / 2, cy - 14, tw, 28);
+      ctx.strokeStyle = CK.rgba('accent', 0.7);
+      ctx.strokeRect(w / 2 - tw / 2 + 0.5, cy - 13.5, tw - 1, 27);
+      ctx.fillStyle = blocked ? CK.c.red : Math.sin(t * 3) > -0.3 ? CK.c.accent : CK.rgba('accent', 0.5);
+      ctx.fillText(msg, w / 2, cy + 1);
+    }
+    CK.resetCtx(ctx);
+
+    var text = blocked ? '宇宙ラジオ · audio blocked by the host'
+      : live ? '宇宙ラジオ · ON · ' + eng.state() + ' · ' + Math.round(eng.bpm()) + ' BPM'
+      : '宇宙ラジオ · OFF · click to tune in';
+    if (text !== lastText) { lastText = text; label.textContent = text; }
+  }, 30);
+})();
+</script>

@@ -1,0 +1,17 @@
+{
+  "id": "ss-codebase-cosmos",
+  "name": "Codebase Cosmos",
+  "version": "1.0.0",
+  "description": "Your codebase as a 3D galaxy: one spiral arm per top-level folder, a star system per folder, a star per file. Stars glow when Claude reads them and grow when it edits them; uncommitted files turn into red giants that go supernova on your next commit. Drag to orbit, scroll to zoom, double-click to reset.",
+  "author": "j0j0",
+  "category": "Starship",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "event.events",
+      "git.status"
+    ]
+  }
+}
