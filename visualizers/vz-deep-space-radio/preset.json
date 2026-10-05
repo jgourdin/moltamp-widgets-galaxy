@@ -1,0 +1,8 @@
+{
+  "id": "vz-deep-space-radio",
+  "name": "Radio Scope ♪",
+  "description": "Deep Space Radio's dial, oscilloscope and spectrum fed with whatever is playing: the scope traces the real waveform, the needle drifts to where the energy sits and the dial reads the tempo.",
+  "author": "j0j0",
+  "version": "1.0.0",
+  "dataType": "both"
+}

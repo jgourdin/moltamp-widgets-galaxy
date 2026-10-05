@@ -1,0 +1,8 @@
+{
+  "id": "vz-rate-fuel",
+  "name": "Fuel VU ♪",
+  "description": "The twin fuel gauges turned into VU meters: the left needle swings with the bass, the right one with the highs, with real VU ballistics and peak lamps.",
+  "author": "j0j0",
+  "version": "1.0.0",
+  "dataType": "frequency"
+}

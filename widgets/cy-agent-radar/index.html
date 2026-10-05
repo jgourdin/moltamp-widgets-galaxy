@@ -220,6 +220,58 @@ var CK = (function () {
     return 'mcp:' + server;
   }
 
+  // ------------------------------------------------------------------ Claude session stats
+  // In MOLTamp 3.2.2, telemetry.read hands over Claude's raw status line payload (context_window, cost,
+  // rate_limits) and stats.read only holds lifetime aggregates, contrary to the docs. Both are read so the
+  // documented shape (contextPct, cost, rate5h…) still works if a later version fixes stats.read.
+  // Resolves to a normalised object, or null when no session data is flowing.
+  function sessNum(v) { var n = typeof v === 'string' ? parseFloat(v) : v; return typeof n === 'number' && isFinite(n) ? n : null; }
+  function sessPick(o, paths) {
+    for (var i = 0; i < paths.length; i++) {
+      var v = o, parts = paths[i].split('.');
+      for (var j = 0; j < parts.length && v !== null && v !== undefined; j++) v = v[parts[j]];
+      v = sessNum(v);
+      if (v !== null) return v;
+    }
+    return null;
+  }
+  function normaliseSession(s) {
+    var rl = s.rate_limits || s.rateLimits || {}, m = s.model;
+    var out = {
+      contextPct: sessPick(s, ['context_window.used_percentage', 'contextPct', 'context_pct']),
+      cost: sessPick(s, ['cost.total_cost_usd', 'cost', 'costUsd', 'cost_usd']),
+      tokensIn: sessPick(s, ['context_window.total_input_tokens', 'tokensIn', 'tokens_in']),
+      tokensOut: sessPick(s, ['context_window.total_output_tokens', 'tokensOut', 'tokens_out']),
+      apiMs: sessPick(s, ['cost.total_api_duration_ms', 'apiTime']),
+      model: m && typeof m === 'object' ? String(m.display_name || m.id || '') : String(m || ''),
+      modelId: m && typeof m === 'object' ? String(m.id || '') : String(m || ''),
+      rate5h: rl.five_hour !== undefined ? rl.five_hour : s.rate5h !== undefined ? s.rate5h : null,
+      rate7d: rl.seven_day !== undefined ? rl.seven_day : s.rate7d !== undefined ? s.rate7d : null,
+      sessionId: String(s.session_id || s.sessionId || ''),
+      raw: s
+    };
+    var any = out.contextPct !== null || out.cost !== null || out.tokensIn !== null || out.rate5h !== null;
+    return any ? out : null;
+  }
+  // telemetry.read returns whichever session refreshed its status line last; with several Claude sessions open,
+  // stay on one while it keeps reporting (within a minute) so readings don't flip between sessions.
+  var sessCache = {}, sessFocus = '';
+  function readSession() {
+    return call('telemetry.read').catch(function () { return null; }).then(function (t) {
+      var fromStatus = t && typeof t === 'object' ? normaliseSession(t) : null;
+      if (fromStatus) {
+        var id = fromStatus.sessionId || 'session', now = Date.now();
+        sessCache[id] = { s: fromStatus, at: now };
+        var cur = sessCache[sessFocus];
+        if (!cur || now - cur.at > 60000) sessFocus = id;
+        Object.keys(sessCache).forEach(function (k) { if (now - sessCache[k].at > 3600e3) delete sessCache[k]; });
+        return sessCache[sessFocus].s;
+      }
+      return call('stats.read').then(function (s) { return s && typeof s === 'object' ? normaliseSession(s) : null; })
+        .catch(function () { return null; });
+    });
+  }
+
   // ------------------------------------------------------------------ canvas + loop
   // Paused while off screen (hidden tab) or while the whole page is hidden; both must clear to resume.
   var onScreen = true, pageVisible = !document.hidden, watching = false;
@@ -308,20 +360,20 @@ var CK = (function () {
     poll: poll, subscribe: subscribe, call: call, font: font,
     state: currentState, stateInfo: state, onState: function (cb) { stateListeners.push(cb); },
     telemetry: telemetry, telemetryLevel: telemetryLevel,
-    onEvents: onEvents, isFailure: isFailure, toolLabel: toolLabel,
+    onEvents: onEvents, isFailure: isFailure, toolLabel: toolLabel, readSession: readSession,
     surface: surface, loop: loop, resetCtx: resetCtx, isVisible: visibleNow,
     hash: hash, prng: prng, fmtBytes: fmtBytes,
     meta: (hasSdk && moltamp.meta) || { context: 'panel' }
   };
 })();
 
-// Agent Radar: sub-agents from the agent store as blips; the sweep lights them up as it passes.
+// Agent Radar: sub-agents (from Claude Code hook events, or the agent store) as blips; the sweep lights them up as it passes.
 (function () {
   'use strict';
   var S = CK.surface(document.getElementById('cy-canvas'));
   var label = document.getElementById('cy-label');
   var GHOST_MS = 30000, MAX_BLIPS = 40;
-  var blips = {}, activeCount = null, sweep = 0, lastText = '';
+  var blips = {}, activeCount = null, sweep = 0, lastText = '', hooksSeen = false;
 
   function field(a, names) {
     for (var i = 0; i < names.length; i++) if (a[names[i]] !== undefined && a[names[i]] !== null && a[names[i]] !== '') return a[names[i]];
@@ -345,7 +397,51 @@ var CK = (function () {
     });
   }
 
+  // agent.agents stayed empty in every probe of MOLTamp 3.2.2: sub-agents come from the hook events instead.
+  // Agent/Task PreToolUse launches a blip; its PostToolUse ends it, unless the agent runs in the background,
+  // which ends with SubagentStop (whose agent_id never matches the tool call: the session's oldest one goes).
+  function sessionOf(e) { return String(e._session || e.session_id || ''); }
+  function blipFor(id, name, born, sess) {
+    return blips[id] = { ang: CK.hash(id) * Math.PI * 2, rad: 0.28 + CK.hash(id + '#r') * 0.62, name: name, born: born, lit: 1,
+      done: false, doneAt: 0, failed: false, session: sess, async: false, ts: 0 };
+  }
+  CK.onEvents(function (events, history) {
+    var now = performance.now();
+    events.forEach(function (e) {
+      var hook = String(e.hook_event_name || e._hook || ''), agentCall = /^(Agent|Task)$/.test(String(e.tool_name || ''));
+      var id = e.tool_use_id ? String(e.tool_use_id) : sessionOf(e) + ':' + e._ts;
+      if (/^Pre/i.test(hook) && agentCall) {
+        hooksSeen = true;
+        if (Object.keys(blips).length >= MAX_BLIPS || blips[id]) return;
+        var inp = e.tool_input || {};
+        var b = blipFor(id, String(inp.subagent_type || inp.description || 'agent').slice(0, 32), now, sessionOf(e));
+        b.ts = Number(e._ts) || Date.now();
+        if (history) b.lit = 0;
+      } else if (/^Post/i.test(hook) && agentCall && blips[id]) {
+        var r = e.tool_response, text = typeof r === 'string' ? r : JSON.stringify(r || '');
+        if (/async agent launched|in the background/i.test(text)) { blips[id].async = true; return; }
+        // A run that finished before the widget opened shows no ghost.
+        blips[id].done = true;
+        blips[id].doneAt = history ? now - GHOST_MS : now;
+        blips[id].failed = CK.isFailure(e);
+      } else if (/^Subagent(Stop|Failure)$/i.test(hook)) {
+        var sess = sessionOf(e), oldest = null;
+        Object.keys(blips).forEach(function (k) {
+          var x = blips[k];
+          if (!x.done && x.async && x.session === sess && (!oldest || x.ts < oldest.ts)) oldest = x;
+        });
+        if (oldest) { oldest.done = true; oldest.doneAt = history ? now - GHOST_MS : now; }
+      } else if (/Failure$/i.test(hook) && agentCall && blips[id]) {
+        blips[id].done = true; blips[id].doneAt = now; blips[id].failed = true;
+      }
+    });
+    // History: an agent launched over an hour ago with no end seen is not still running.
+    if (history) Object.keys(blips).forEach(function (k) { var x = blips[k]; if (!x.done && Date.now() - x.ts > 3600e3) delete blips[k]; });
+  });
+
   CK.subscribe('agent', 'agents', function (v) {
+    // The store only drives the radar when no hook event ever mentioned an agent.
+    if (hooksSeen) return;
     var now = performance.now(), seen = {};
     normalize(v).forEach(function (a) {
       seen[a.id] = true;

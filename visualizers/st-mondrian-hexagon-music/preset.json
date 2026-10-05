@@ -1,0 +1,8 @@
+{
+  "id": "st-mondrian-hexagon-music",
+  "name": "Mondrian Hexagons ♪",
+  "description": "Mondrian hexagons that split and merge to the tempo, punched by every beat.",
+  "author": "DavidBraun (port: j0j0)",
+  "version": "1.0.0",
+  "dataType": "frequency"
+}

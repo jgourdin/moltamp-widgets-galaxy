@@ -1,0 +1,8 @@
+{
+  "id": "vz-agent-radar",
+  "name": "Agent Radar ♪",
+  "description": "The Agent Radar, tuned to your music: every beat drops a blip at the angle of the loudest band, the range rings pulse with the bass and the sweep turns to the tempo.",
+  "author": "j0j0",
+  "version": "1.0.0",
+  "dataType": "frequency"
+}

@@ -1,0 +1,8 @@
+{
+  "id": "vz-waiting-arcade",
+  "name": "Waiting Arcade ♪",
+  "description": "Attract-mode space invaders that march one step per beat, with a pilot that fires on the hits and explosions that flare with the highs.",
+  "author": "j0j0",
+  "version": "1.0.0",
+  "dataType": "frequency"
+}

@@ -220,6 +220,58 @@ var CK = (function () {
     return 'mcp:' + server;
   }
 
+  // ------------------------------------------------------------------ Claude session stats
+  // In MOLTamp 3.2.2, telemetry.read hands over Claude's raw status line payload (context_window, cost,
+  // rate_limits) and stats.read only holds lifetime aggregates, contrary to the docs. Both are read so the
+  // documented shape (contextPct, cost, rate5h…) still works if a later version fixes stats.read.
+  // Resolves to a normalised object, or null when no session data is flowing.
+  function sessNum(v) { var n = typeof v === 'string' ? parseFloat(v) : v; return typeof n === 'number' && isFinite(n) ? n : null; }
+  function sessPick(o, paths) {
+    for (var i = 0; i < paths.length; i++) {
+      var v = o, parts = paths[i].split('.');
+      for (var j = 0; j < parts.length && v !== null && v !== undefined; j++) v = v[parts[j]];
+      v = sessNum(v);
+      if (v !== null) return v;
+    }
+    return null;
+  }
+  function normaliseSession(s) {
+    var rl = s.rate_limits || s.rateLimits || {}, m = s.model;
+    var out = {
+      contextPct: sessPick(s, ['context_window.used_percentage', 'contextPct', 'context_pct']),
+      cost: sessPick(s, ['cost.total_cost_usd', 'cost', 'costUsd', 'cost_usd']),
+      tokensIn: sessPick(s, ['context_window.total_input_tokens', 'tokensIn', 'tokens_in']),
+      tokensOut: sessPick(s, ['context_window.total_output_tokens', 'tokensOut', 'tokens_out']),
+      apiMs: sessPick(s, ['cost.total_api_duration_ms', 'apiTime']),
+      model: m && typeof m === 'object' ? String(m.display_name || m.id || '') : String(m || ''),
+      modelId: m && typeof m === 'object' ? String(m.id || '') : String(m || ''),
+      rate5h: rl.five_hour !== undefined ? rl.five_hour : s.rate5h !== undefined ? s.rate5h : null,
+      rate7d: rl.seven_day !== undefined ? rl.seven_day : s.rate7d !== undefined ? s.rate7d : null,
+      sessionId: String(s.session_id || s.sessionId || ''),
+      raw: s
+    };
+    var any = out.contextPct !== null || out.cost !== null || out.tokensIn !== null || out.rate5h !== null;
+    return any ? out : null;
+  }
+  // telemetry.read returns whichever session refreshed its status line last; with several Claude sessions open,
+  // stay on one while it keeps reporting (within a minute) so readings don't flip between sessions.
+  var sessCache = {}, sessFocus = '';
+  function readSession() {
+    return call('telemetry.read').catch(function () { return null; }).then(function (t) {
+      var fromStatus = t && typeof t === 'object' ? normaliseSession(t) : null;
+      if (fromStatus) {
+        var id = fromStatus.sessionId || 'session', now = Date.now();
+        sessCache[id] = { s: fromStatus, at: now };
+        var cur = sessCache[sessFocus];
+        if (!cur || now - cur.at > 60000) sessFocus = id;
+        Object.keys(sessCache).forEach(function (k) { if (now - sessCache[k].at > 3600e3) delete sessCache[k]; });
+        return sessCache[sessFocus].s;
+      }
+      return call('stats.read').then(function (s) { return s && typeof s === 'object' ? normaliseSession(s) : null; })
+        .catch(function () { return null; });
+    });
+  }
+
   // ------------------------------------------------------------------ canvas + loop
   // Paused while off screen (hidden tab) or while the whole page is hidden; both must clear to resume.
   var onScreen = true, pageVisible = !document.hidden, watching = false;
@@ -308,7 +360,7 @@ var CK = (function () {
     poll: poll, subscribe: subscribe, call: call, font: font,
     state: currentState, stateInfo: state, onState: function (cb) { stateListeners.push(cb); },
     telemetry: telemetry, telemetryLevel: telemetryLevel,
-    onEvents: onEvents, isFailure: isFailure, toolLabel: toolLabel,
+    onEvents: onEvents, isFailure: isFailure, toolLabel: toolLabel, readSession: readSession,
     surface: surface, loop: loop, resetCtx: resetCtx, isVisible: visibleNow,
     hash: hash, prng: prng, fmtBytes: fmtBytes,
     meta: (hasSdk && moltamp.meta) || { context: 'panel' }
@@ -325,7 +377,7 @@ var CK = (function () {
   var cfg = { maxPixels: 500000, fpsCap: 30, incl: 0.22 };
   var D = 30;
   var gl = null, api = '', prog = null, buf = null, U = {}, lost = false, broken = false;
-  var sim = { ctx: null, rs: 0.85, heat: 0.3, flare: 0, clock: 0, burstAt: -1e9, err: 0, pulse: 0, warn: 0,
+  var sim = { ctx: null, sid: null, rs: 0.85, heat: 0.3, flare: 0, clock: 0, burstAt: -1e9, err: 0, pulse: 0, warn: 0,
     tps: 0, tpsTarget: 0, tokens: null, tokAt: 0 };
   var t = 0, quality = 1, avgInt = 0, lastAdjust = 0, lastText = '', labelAt = 0;
 
@@ -521,31 +573,21 @@ var CK = (function () {
     if (typeof v === 'string') v = parseFloat(v);
     return typeof v === 'number' && isFinite(v) ? v : null;
   }
-  function pick(o, paths) {
-    for (var i = 0; i < paths.length; i++) {
-      var v = o, parts = paths[i].split('.');
-      for (var j = 0; j < parts.length && v !== null && v !== undefined; j++) v = v[parts[j]];
-      v = num(v);
-      if (v !== null) return v;
-    }
-    return null;
-  }
 
   function readStats() {
-    CK.call('stats.read').then(function (s) {
-      s = s || {};
-      var now = performance.now();
-      var ctx = pick(s, ['contextPct', 'context_pct', 'context.used_percentage', 'context_window.used_percentage', 'context.pct']);
+    CK.readSession().then(function (s) {
+      var now = performance.now(), sid = s ? s.sessionId : '', same = sid === sim.sid;
+      var ctx = s ? s.contextPct : null;
       if (ctx !== null) {
         ctx = Math.max(0, Math.min(100, ctx));
-        // A sharp drop is a compaction (or a fresh session): the hole radiates.
-        if (sim.ctx !== null && sim.ctx - ctx >= 15) sim.burstAt = now;
+        // A sharp drop within the same session is a compaction: the hole radiates.
+        if (same && sim.ctx !== null && sim.ctx - ctx >= 15) sim.burstAt = now;
       }
       sim.ctx = ctx;
-      var tin = pick(s, ['tokensIn', 'tokens_in', 'inputTokens']), tout = pick(s, ['tokensOut', 'tokens_out', 'outputTokens']);
-      var tok = tin !== null || tout !== null ? (tin || 0) + (tout || 0) : pick(s, ['tokens']);
+      sim.sid = sid;
+      var tok = s && (s.tokensIn !== null || s.tokensOut !== null) ? (s.tokensIn || 0) + (s.tokensOut || 0) : null;
       if (tok !== null) {
-        sim.tpsTarget = sim.tokens !== null && tok >= sim.tokens && now > sim.tokAt ? (tok - sim.tokens) / ((now - sim.tokAt) / 1000) : 0;
+        sim.tpsTarget = same && sim.tokens !== null && tok >= sim.tokens && now > sim.tokAt ? (tok - sim.tokens) / ((now - sim.tokAt) / 1000) : 0;
         sim.tokens = tok;
         sim.tokAt = now;
       }

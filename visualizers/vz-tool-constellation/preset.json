@@ -1,0 +1,8 @@
+{
+  "id": "vz-tool-constellation",
+  "name": "Spectrum Constellation ♪",
+  "description": "Your music as a constellation: one star per frequency band, glowing with its level, linked to its neighbours, with a shooting star from the loudest band on every beat.",
+  "author": "j0j0",
+  "version": "1.0.0",
+  "dataType": "frequency"
+}

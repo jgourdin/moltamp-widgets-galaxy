@@ -1,0 +1,8 @@
+{
+  "id": "vz-context-core",
+  "name": "Reactor Core ♪",
+  "description": "The Context Core reactor running on your music: the gauge fills with the loudness from green to orange to red, the core throbs on every beat and a sudden drop after a loud passage triggers a SCRAM flash.",
+  "author": "j0j0",
+  "version": "1.0.0",
+  "dataType": "frequency"
+}

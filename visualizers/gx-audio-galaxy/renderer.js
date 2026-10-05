@@ -32,6 +32,7 @@ var fx = new Float32Array(FIELD);
 var fy = new Float32Array(FIELD);
 var fp = new Float32Array(FIELD);
 
+var kick = 0, kickAvg = 0, kickPrev = 0, kickCool = 0, quiet = 0;
 var flares = [];
 var meteors = [];
 for (var q = 0; q < MAX_FLARES; q++) flares.push({ life: 0 });
@@ -151,21 +152,34 @@ module.exports = function (ctx, data, W, H, colors, beat) {
   colors = colors || {};
   data = data || [];
   beat = beat || { decay: 0, isBeat: false };
-  var decay = beat.decay || 0;
   resolvePalette(colors);
+  // Our own kick detector backs up MOLTamp's beat flag, which can miss soft or busy mixes:
+  // a bass hit clearly above its recent average, rising, at most ~5 per second.
+  var kickNow = band(data, 1, 7);
+  kickAvg += (kickNow - kickAvg) * 0.04;
+  kickCool -= 1 / 60;
+  var onset = kickNow > kickAvg * 1.22 + 0.035 && kickNow - kickPrev > 0.02 && kickCool <= 0;
+  kickPrev = kickNow;
+  if (onset || beat.isBeat) { kick = 1; kickCool = 0.2; }
+  kick *= 0.9;
+  var hit = onset || beat.isBeat;
+  var decay = Math.max(beat.decay || 0, kick);
 
   t += 1 / 60;
   bassS += (band(data, 1, 7) - bassS) * 0.15;
   midS += (band(data, 8, 40) - midS) * 0.12;
   highS += (band(data, 48, 110) - highS) * 0.2;
-  rot += 0.0018 + bassS * 0.022 + decay * 0.006;
+  quiet = bassS + midS + highS < 0.03 ? quiet + 1 / 60 : 0;
+  // The bass is the engine: it spins the arms up to ~10x the idle speed, and each kick gives them a shove.
+  rot += 0.0018 + Math.min(1, bassS * 1.5) * 0.045 + decay * 0.02;
 
   // Framing: a tilted disc in a panel, a nearly edge-on one stretched across a wide banner.
   var aspect = H / W;
   var tilt = Math.max(0.2, Math.min(0.62, aspect * 2.2));
   var wide = W > H * 1.8;
   var spin = wide ? -0.05 : -0.42;
-  var R = Math.min(W * 0.47, (H * (wide ? 0.85 : 0.62)) / tilt);
+  // The whole disc breathes with the bass and swells on every kick.
+  var R = Math.min(W * 0.47, (H * (wide ? 0.85 : 0.62)) / tilt) * (0.9 + Math.min(1, bassS * 1.4) * 0.12 + decay * 0.07);
   var cx = W / 2;
   var cy = H / 2;
   var cosT = Math.cos(spin);
@@ -244,7 +258,7 @@ module.exports = function (ctx, data, W, H, colors, beat) {
   ctx.rotate(spin);
   ctx.scale(1, tilt * 1.15);
   ctx.globalAlpha = 1;
-  var coreR = R * (0.13 + bassS * 0.08 + decay * 0.1);
+  var coreR = R * (0.12 + Math.min(1, bassS * 1.4) * 0.12 + decay * 0.12);
   var core = ctx.createRadialGradient(0, 0, 0, 0, 0, coreR);
   core.addColorStop(0, rgba(light ? 'accent' : 'text', 0.95));
   core.addColorStop(0.25, rgba(light ? 'accent' : 'yellow', 0.7));
@@ -255,18 +269,32 @@ module.exports = function (ctx, data, W, H, colors, beat) {
   ctx.arc(0, 0, coreR, 0, 6.2832);
   ctx.fill();
 
-  if (beat.isBeat) {
+  // Beat flash: the nucleus blooms, then the rings ride outwards.
+  if (decay > 0.03) {
+    var bloom = ctx.createRadialGradient(0, 0, 0, 0, 0, coreR * (1.6 + decay * 1.6));
+    bloom.addColorStop(0, rgba(light ? 'accent' : 'text', 0.7 * decay));
+    bloom.addColorStop(0.35, rgba('accent', 0.45 * decay));
+    bloom.addColorStop(1, rgba('accent', 0));
+    ctx.globalCompositeOperation = light ? 'source-over' : 'lighter';
+    ctx.fillStyle = bloom;
+    ctx.beginPath();
+    ctx.arc(0, 0, coreR * (1.6 + decay * 1.6), 0, 6.2832);
+    ctx.fill();
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  if (hit) {
     var slot = flares[0];
     for (var f = 1; f < MAX_FLARES; f++) if (flares[f].life < slot.life) slot = flares[f];
     slot.life = 1;
   }
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = 2.5;
   ctx.strokeStyle = pal.accent;
   for (f = 0; f < MAX_FLARES; f++) {
     var fl = flares[f];
     if (fl.life <= 0) continue;
     fl.life -= 0.045;
-    ctx.globalAlpha = Math.max(0, fl.life) * 0.35;
+    ctx.globalAlpha = Math.max(0, fl.life) * 0.7;
     ctx.beginPath();
     ctx.arc(0, 0, coreR * (1 + (1 - fl.life) * 2.2), 0, 6.2832);
     ctx.stroke();
@@ -288,7 +316,7 @@ module.exports = function (ctx, data, W, H, colors, beat) {
   }
 
   // Shooting stars across the field, now and then on a beat.
-  if (beat.isBeat && Math.random() < 0.35) {
+  if (hit && Math.random() < 0.35) {
     for (var m = 0; m < MAX_METEORS; m++) {
       var mt = meteors[m];
       if (mt.life > 0) continue;
@@ -320,4 +348,17 @@ module.exports = function (ctx, data, W, H, colors, beat) {
   ctx.globalCompositeOperation = 'source-over';
   ctx.shadowBlur = 0;
   ctx.lineWidth = 1;
+  // After a few seconds of silence, a discreet note in the corner: a muted audio capture is then easy to spot.
+  if (quiet > 6 && W >= 90 && H >= 40) {
+    ctx.globalAlpha = Math.min(1, (quiet - 6) / 2) * 0.6;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.font = Math.max(8, Math.min(10, H / 14)).toFixed(1) + 'px "SF Mono", Menlo, monospace';
+    ctx.textAlign = 'right';
+    ctx.textBaseline = 'bottom';
+    ctx.fillStyle = pal.dim;
+    ctx.fillText('\u266a no audio signal', W - 6, H - 4);
+    ctx.globalAlpha = 1;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'alphabetic';
+  }
 };

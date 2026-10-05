@@ -11,7 +11,9 @@
     "shellState": true,
     "stores": [
       "agent.agents",
-      "agent.activeCount"
+      "agent.activeCount",
+      "event.events",
+      "event.eventCount"
     ]
   }
 }

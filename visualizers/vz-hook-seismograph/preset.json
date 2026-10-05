@@ -1,0 +1,8 @@
+{
+  "id": "vz-hook-seismograph",
+  "name": "Beat Seismograph ♪",
+  "description": "A seismograph listening to your music: the needle trembles with the energy, every beat is a shock coloured by its kick, snare or hat, and a drop after a quiet break sets off an earthquake with its magnitude.",
+  "author": "j0j0",
+  "version": "1.0.0",
+  "dataType": "frequency"
+}

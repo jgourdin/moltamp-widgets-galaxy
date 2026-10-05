@@ -1,0 +1,8 @@
+{
+  "id": "vz-agent-fleet",
+  "name": "Agent Fleet ♪",
+  "description": "The Agent Fleet flies to your music: the formation breathes with the beat, a new ship launches every four beats and docks a few bars later, engine trails stretch with the bass.",
+  "author": "j0j0",
+  "version": "1.0.0",
+  "dataType": "frequency"
+}

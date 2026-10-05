@@ -1,0 +1,8 @@
+{
+  "id": "vz-cassette-deck",
+  "name": "Tape Deck ♪",
+  "description": "A mixtape in a tape deck that plays along with your music: the reels spin with the tempo, the tape winds as the songs go by and the VU meters bounce with the real levels.",
+  "author": "j0j0",
+  "version": "1.0.0",
+  "dataType": "frequency"
+}

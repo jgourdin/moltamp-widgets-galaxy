@@ -1,0 +1,8 @@
+{
+  "id": "vz-vitals",
+  "name": "Cyber Vitals ♪",
+  "description": "A cardiac monitor for your music: every beat draws a heartbeat on the ECG with its BPM, the energy breathes on a second trace, and silence flatlines into NO SIGNAL.",
+  "author": "j0j0",
+  "version": "1.0.0",
+  "dataType": "frequency"
+}

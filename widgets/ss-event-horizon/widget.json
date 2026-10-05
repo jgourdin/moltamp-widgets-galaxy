@@ -9,6 +9,7 @@
   "agent": "claude",
   "api": {
     "ipc": [
+      "telemetry.read",
       "stats.read"
     ],
     "shellState": true,

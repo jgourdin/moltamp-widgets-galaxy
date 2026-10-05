@@ -1,0 +1,8 @@
+{
+  "id": "vz-flight-recorder",
+  "name": "Flight Recorder ♪",
+  "description": "The black box of your track: a scrolling spectrogram of the last 45 seconds with every beat ticked on a marker lane, the tempo and how the sound splits between bass, mids and highs.",
+  "author": "j0j0",
+  "version": "1.0.0",
+  "dataType": "frequency"
+}
