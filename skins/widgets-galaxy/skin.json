@@ -1,0 +1,67 @@
+{
+  "id": "widgets-galaxy",
+  "name": "Galaxy",
+  "version": "1.0.0",
+  "author": "j0j0",
+  "description": "Deep space in vaporwave pink, cyan and purple: nebula panels under a twinkling star field, an aurora line under the banner, and a shell that breathes with Claude. Made for the MOLTamp Widgets Galaxy.",
+  "engine": "1.0",
+  "tags": ["dark", "space", "vaporwave", "neon", "cool"],
+  "effects": {
+    "glow": true,
+    "nebula": { "label": "Nebula", "description": "Soft pink, purple and cyan clouds behind the panels" },
+    "starfield": { "label": "Star Field", "description": "Twinkling stars behind the side panels" },
+    "aurora": { "label": "Aurora Line", "description": "Flowing gradient line under the vibes banner, faster while Claude works" },
+    "vibes-glow": { "label": "Vibes Glow", "description": "Inner glow on the vibes banner during high activity" },
+    "claude-pulse": { "label": "Claude Pulse", "description": "Purple breath around the terminal while Claude thinks, mint flash when it is done" }
+  },
+  "vibes": {
+    "slots": [
+      { "widgetId": "gif", "gifSrc": "assets/vibes.gif", "gifFit": "cover" }
+    ]
+  },
+  "defaultLayout": {
+    "tabAssignments": {
+      "intel": ["events", "files", "agents", "git"],
+      "signal": ["custom-1", "custom-2", "custom-3", "custom-4"]
+    },
+    "tabVisibility": {
+      "events": true,
+      "files": true,
+      "agents": true,
+      "git": true,
+      "custom-1": true,
+      "custom-2": true,
+      "custom-3": true,
+      "custom-4": true
+    },
+    "customTabs": {
+      "custom-1": { "label": "NEBULA", "widgets": ["user-shaders-st-infinite-hamsa", "clock", "weather"] },
+      "custom-2": { "label": "DISTRICT", "widgets": ["user-cyberpunk-cy-neural-link", "user-cyberpunk-cy-agent-radar", "user-cyberpunk-cy-context-core"] },
+      "custom-3": { "label": "RADIO", "widgets": ["music", "visualizer", "equalizer"] },
+      "custom-4": { "label": "TELEMETRY", "widgets": ["usage-model", "usage-context", "usage-tokens", "usage-session", "usage-rates", "user-cyberpunk-cy-vitals"] }
+    },
+    "dimensions": {
+      "leftWidth": 250,
+      "rightWidth": 230,
+      "vibesHeight": 200,
+      "bottomHeight": 26,
+      "panelScale": 1,
+      "terminalScale": 1
+    },
+    "panelVisibility": {
+      "showVibes": true,
+      "showLeft": true,
+      "showRight": true,
+      "showBottom": true
+    },
+    "vibesDeck": {
+      "slots": [
+        { "widgetId": "user-shaders-st-hive-lattice" },
+        { "widgetId": "visualizer" },
+        { "widgetId": "gif", "gifSrc": "assets/vibes.gif", "gifFit": "cover" }
+      ],
+      "widths": [26, 48, 26]
+    },
+    "visualizerPreset": "gx-audio-galaxy"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "id": "mc-rate-fuel",
+  "name": "Rate Limit Fuel",
+  "version": "1.0.0",
+  "description": "Your 5-hour and 7-day Claude limits as fuel gauges, with the time to the next refuel and how long the current burn rate lasts.",
+  "author": "j0j0",
+  "category": "Mission Control",
+  "sizing": "fill",
+  "agent": "claude",
+  "api": {
+    "ipc": [
+      "stats.read"
+    ],
+    "shellState": true
+  }
+}

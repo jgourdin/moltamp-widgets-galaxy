@@ -1,0 +1,16 @@
+{
+  "id": "mc-taxi-meter",
+  "name": "Taxi Meter",
+  "version": "1.0.0",
+  "description": "A retro taxi meter for your Claude session: the fare rolls on mechanical drums while Claude works, with tokens, API time, the hourly rate and a lifetime odometer. The roof lamp tells you whether Claude is for hire, on a fare or out of service.",
+  "author": "j0j0",
+  "category": "Mission Control",
+  "sizing": "fill",
+  "agent": "claude",
+  "api": {
+    "ipc": [
+      "stats.read"
+    ],
+    "shellState": true
+  }
+}

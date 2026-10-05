@@ -1,42 +1,17 @@
 <!--
-  Cyber Vitals — Cyberpunk pack for MOLTamp
-  CPU and memory as vital signs: segmented gauges, Japanese labels, a heartbeat that follows the load, scanlines.
+  Hook Seismograph — Mission Control pack for MOLTamp
+  A seismograph of Claude's tool calls: every call shakes the needle in its tool's colour, and a failed call sets off a red earthquake with aftershocks. Click to change the time window (1, 3 or 10 minutes).
   Author: j0j0 · License: MIT
 -->
-<div id="cy-root" class="vt">
-  <div class="vt-head"><span class="vt-title">生体監視</span><span class="vt-sub">VITALS</span><span class="vt-right" id="vt-up">稼働 --</span></div>
-  <div class="vt-row"><span class="vt-lbl">演算<em>CPU</em></span><div class="vt-bar" id="vt-cpu"></div><span class="vt-val" id="vt-cpu-v">--</span></div>
-  <div class="vt-row"><span class="vt-lbl">記憶<em>MEM</em></span><div class="vt-bar" id="vt-mem"></div><span class="vt-val" id="vt-mem-v">--</span></div>
-  <div class="vt-ecg"><canvas id="cy-canvas"></canvas></div>
-  <div class="vt-foot"><span id="vt-load">負荷 LOAD --</span><span id="vt-bpm">脈拍 -- BPM</span></div>
-  <div class="vt-scan"></div>
-</div>
+<div id="cy-root"><canvas id="cy-canvas"></canvas><div id="cy-label"></div></div>
 
 <style>
-  .vt {
-    position: absolute; inset: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; overflow: hidden;
-    background: var(--c-chrome-bg); color: var(--c-chrome-text); container-type: inline-size;
-    font: calc(clamp(9px, 4.2cqw, 13px) * var(--user-text-scale, 1)) / 1.3 'SF Mono', Menlo, 'Hiragino Sans', monospace;
-  }
-  .vt-head { display: flex; align-items: baseline; gap: 6px; letter-spacing: 0.08em; }
-  .vt-title { color: var(--c-chrome-accent); font-weight: bold; }
-  .vt-sub, .vt-lbl em, .vt-foot { color: var(--c-chrome-dim); }
-  .vt-right { margin-left: auto; color: var(--c-chrome-dim); }
-  .vt-row { display: flex; align-items: center; gap: 8px; }
-  .vt-lbl { width: 5.6em; flex: none; }
-  .vt-lbl em { font-style: normal; margin-left: 0.4em; font-size: 0.85em; }
-  .vt-bar { flex: 1; display: flex; gap: 2px; height: 0.95em; }
-  .vt-bar i { flex: 1; background: var(--c-chrome-border); border-radius: 1px; transition: background 0.4s; }
-  .vt-bar i.on { background: var(--t-green); }
-  .vt-bar i.warn { background: var(--t-yellow); }
-  .vt-bar i.crit { background: var(--t-red); }
-  .vt-val { width: 3.6em; text-align: right; flex: none; color: var(--c-chrome-accent); }
-  .vt-ecg { flex: 1; min-height: 36px; border-top: 1px solid var(--c-chrome-border); border-bottom: 1px solid var(--c-chrome-border); }
-  .vt-ecg canvas { display: block; width: 100%; height: 100%; }
-  .vt-foot { display: flex; justify-content: space-between; letter-spacing: 0.05em; }
-  .vt-scan {
-    position: absolute; inset: 0; pointer-events: none; opacity: 0.35;
-    background: repeating-linear-gradient(to bottom, transparent 0 2px, var(--c-chrome-bg) 2px 3px);
+  #cy-root { position: absolute; inset: 0; overflow: hidden; background: var(--c-chrome-bg); container-type: size; }
+  #cy-canvas { display: block; width: 100%; height: 100%; }
+  #cy-label {
+    position: absolute; left: 8px; bottom: 6px; pointer-events: none; letter-spacing: 0.08em;
+    color: var(--c-chrome-dim); text-shadow: 0 0 6px var(--c-chrome-bg);
+    font: calc(clamp(8px, 3.4cqw, 12px) * var(--user-text-scale, 1)) 'SF Mono', Menlo, 'Hiragino Sans', monospace;
   }
 </style>
 
@@ -340,92 +315,152 @@ var CK = (function () {
   };
 })();
 
-// Cyber Vitals: system.getStats as vital signs; the heartbeat rate follows CPU load.
+// Hook Seismograph: Claude Code hook events drawn as a scrolling seismogram; failures are earthquakes.
 (function () {
   'use strict';
-  var SEGMENTS = 16;
   var S = CK.surface(document.getElementById('cy-canvas'));
-  var el = function (id) { return document.getElementById(id); };
-  var bars = { cpu: el('vt-cpu'), mem: el('vt-mem') };
-  var vitals = { cpu: null, mem: null, load: null, uptime: null };
-  var cursor = 0, phase = 0, prevY = null, bpm = 60, lastBpm = '';
+  var label = document.getElementById('cy-label');
+  var WINDOWS = [60, 180, 600], wi = 0, MAX_QUAKES = 600;
+  var quakes = [], shake = 0, alert = null, lastText = '', levels = [], lastLevelAt = 0;
+  CK.telemetry();
 
-  Object.keys(bars).forEach(function (k) {
-    for (var i = 0; i < SEGMENTS; i++) bars[k].appendChild(document.createElement('i'));
+  function family(tool) {
+    if (/^mcp__/.test(tool)) return ['green', 0.4];
+    if (/^(Read|Glob|Grep|LS|NotebookRead)$/.test(tool)) return ['cyan', 0.25];
+    if (/^(Write|Edit|MultiEdit|NotebookEdit)$/.test(tool)) return ['cyan', 0.45];
+    if (/^(Bash|BashOutput|KillShell|Monitor)$/.test(tool)) return ['yellow', 0.55];
+    if (/^(Agent|Task|SendMessage|Workflow|Skill)$/.test(tool)) return ['magenta', 0.7];
+    if (/^(WebFetch|WebSearch)$/.test(tool)) return ['blue', 0.35];
+    return ['accent', 0.3];
+  }
+
+  function add(q) {
+    quakes.push(q);
+    if (quakes.length > MAX_QUAKES) quakes.shift();
+  }
+
+  CK.onEvents(function (events, history) {
+    var horizon = Date.now() - WINDOWS[WINDOWS.length - 1] * 1000;
+    for (var i = 0; i < events.length; i++) {
+      var e = events[i], ts = Number(e._ts) || Date.now(), hook = String(e.hook_event_name || e._hook || '');
+      if (ts < horizon || !e.tool_name) continue;
+      if (/^Pre/i.test(hook)) {
+        var f = family(e.tool_name);
+        add({ t: ts, amp: f[1], tau: 0.35, col: f[0], tool: CK.toolLabel(e.tool_name) });
+      } else if (CK.isFailure(e)) {
+        // Main shock plus a few aftershocks; only a live failure shakes the widget.
+        var name = CK.toolLabel(e.tool_name), mag = 4 + Math.min(2.2, Math.random() * 0.9 + (alert && Date.now() - alert.at < 20000 ? 0.8 : 0));
+        add({ t: ts, amp: 1.5, tau: 1.1, col: 'red', tool: name, quake: true, mag: mag });
+        for (var k = 1; k <= 3; k++) add({ t: ts + k * (900 + k * 400), amp: 0.5 / k, tau: 0.6, col: 'red' });
+        if (!history) { shake = 1; alert = { at: Date.now(), text: '⚠ 地震 M' + mag.toFixed(1) + ' · ' + name + ' failed' }; }
+      }
+    }
+    quakes.sort(function (a, c) { return a.t - c.t; });
   });
 
-  function paintBar(bar, pct) {
-    var on = pct === null ? 0 : Math.round(Math.max(0, Math.min(100, pct)) / 100 * SEGMENTS);
-    for (var i = 0; i < SEGMENTS; i++) {
-      var r = (i + 1) / SEGMENTS;
-      bar.children[i].className = i < on ? (r > 0.85 ? 'crit' : r > 0.6 ? 'warn' : 'on') : '';
-    }
-  }
+  document.getElementById('cy-canvas').addEventListener('click', function () { wi = (wi + 1) % WINDOWS.length; });
 
-  function read() {
-    CK.call('system.getStats').then(function (s) {
-      s = s || {};
-      var cpu = s.cpu || {}, mem = s.memory || {};
-      vitals.cpu = typeof cpu.usagePct === 'number' ? cpu.usagePct : null;
-      vitals.mem = typeof mem.usagePct === 'number' ? mem.usagePct : null;
-      vitals.load = typeof cpu.loadAvg1m === 'number' ? cpu.loadAvg1m : null;
-      vitals.uptime = typeof s.uptime === 'number' ? s.uptime : null;
-      paintBar(bars.cpu, vitals.cpu);
-      paintBar(bars.mem, vitals.mem);
-      el('vt-cpu-v').textContent = vitals.cpu === null ? '--' : Math.round(vitals.cpu) + '%';
-      el('vt-mem-v').textContent = vitals.mem === null ? '--' : Math.round(vitals.mem) + '%';
-      el('vt-load').textContent = '負荷 LOAD ' + (vitals.load === null ? '--' : vitals.load.toFixed(2));
-      var up = vitals.uptime === null ? '--' :
-        (window.moltamp && moltamp.fmt && moltamp.fmt.duration ? moltamp.fmt.duration(vitals.uptime) : Math.round(vitals.uptime / 3600) + 'h');
-      el('vt-up').textContent = '稼働 ' + up;
-    }).catch(function () {
-      paintBar(bars.cpu, null);
-      paintBar(bars.mem, null);
-      el('vt-cpu-v').textContent = el('vt-mem-v').textContent = '--';
-    });
-  }
-  read();
-  CK.poll(2000, read);
-
-  // PQRST-like beat shape over one cycle (0..1).
-  function beat(p) {
-    function g(c, w, a) { var d = (p - c) / w; return a * Math.exp(-d * d); }
-    return g(0.18, 0.035, 0.12) - g(0.29, 0.012, 0.12) + g(0.31, 0.012, 1) - g(0.335, 0.015, 0.28) + g(0.55, 0.06, 0.22);
+  // Background tremor follows terminal throughput; kept per second so the past keeps its own noise.
+  function levelAt(ts) {
+    for (var i = levels.length - 1; i >= 0; i--) if (levels[i][0] <= ts) return levels[i][1];
+    return 0.15;
   }
 
   CK.loop(function (dt) {
     S.fit();
-    var ctx = S.ctx, w = S.w, h = S.h;
-    if (S.resized) { ctx.fillStyle = CK.c.bg; ctx.fillRect(0, 0, w, h); cursor = 0; prevY = null; S.resized = false; }
-    var cpu = vitals.cpu === null ? 10 : vitals.cpu;
-    bpm += ((55 + cpu * 0.95) - bpm) * (1 - Math.exp(-dt / 1.5));
-    var speed = Math.max(40, w / 3); // px per second, about three seconds per sweep
-    var steps = Math.max(1, Math.round(speed * dt / 1.5));
-    var tone = cpu > 85 ? 'red' : cpu > 60 ? 'yellow' : 'green';
-    for (var s = 0; s < steps; s++) {
-      var dx = speed * dt / steps;
-      phase = (phase + dx / speed * bpm / 60) % 1;
-      var y = h * 0.62 - beat(phase) * h * 0.5;
-      // Erase a band ahead of the cursor, like a hospital monitor.
-      ctx.fillStyle = CK.c.bg;
-      ctx.fillRect(cursor, 0, 14, h);
-      if (prevY !== null) {
-        ctx.strokeStyle = CK.c[tone];
-        ctx.lineWidth = 1.6;
-        ctx.beginPath();
-        ctx.moveTo(cursor - dx, prevY);
-        ctx.lineTo(cursor, y);
-        ctx.stroke();
+    S.resized = false;
+    var ctx = S.ctx, w = S.w, h = S.h, now = Date.now(), lvl = CK.telemetryLevel(dt);
+    if (now - lastLevelAt > 1000) { lastLevelAt = now; levels.push([now, lvl]); if (levels.length > 700) levels.shift(); }
+    var win = WINDOWS[wi], pad = Math.max(10, w * 0.04), x0 = 0, x1 = w - pad, mid = h * 0.5, amp = h * 0.42;
+    var t0 = now - win * 1000, msPerPx = win * 1000 / (x1 - x0);
+
+    shake *= Math.exp(-dt * 3);
+    var sx = shake > 0.02 ? (Math.random() - 0.5) * 8 * shake : 0, sy = shake > 0.02 ? (Math.random() - 0.5) * 6 * shake : 0;
+    ctx.fillStyle = CK.c.bg;
+    ctx.fillRect(0, 0, w, h);
+    ctx.save();
+    ctx.translate(sx, sy);
+
+    // Paper: grid lines every 10 s, labelled every 30 s (every 60/120 s on longer windows)
+    ctx.fillStyle = CK.mix('bg', 'text', 0.04);
+    ctx.fillRect(0, 0, x1, h);
+    var minor = win <= 60 ? 5 : win <= 180 ? 15 : 60, major = minor * (win <= 60 ? 2 : 4);
+    ctx.lineWidth = 1;
+    for (var s = 0; s <= win; s += minor) {
+      var gx = x1 - s * 1000 / msPerPx;
+      ctx.strokeStyle = CK.rgba('dim', s % major === 0 ? 0.22 : 0.09);
+      ctx.beginPath(); ctx.moveTo(gx + 0.5, 0); ctx.lineTo(gx + 0.5, h); ctx.stroke();
+      if (s % major === 0 && s > 0 && h > 50) {
+        ctx.fillStyle = CK.rgba('dim', 0.6);
+        ctx.font = CK.font(8);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillText('-' + (s >= 60 ? s / 60 + 'm' : s + 's'), gx, 2);
       }
-      prevY = y;
-      cursor += dx;
-      if (cursor > w) { cursor = 0; prevY = null; }
     }
-    ctx.fillStyle = CK.c[tone];
-    ctx.fillRect(cursor - 1.5, prevY === null ? h / 2 : prevY - 1.5, 3, 3);
+    [0.25, 0.5, 0.75].forEach(function (f) {
+      ctx.strokeStyle = CK.rgba('dim', f === 0.5 ? 0.25 : 0.08);
+      ctx.beginPath(); ctx.moveTo(0, h * f + 0.5); ctx.lineTo(x1, h * f + 0.5); ctx.stroke();
+    });
+
+    // Trace: per pixel column, the envelope of every shock still ringing at that time.
+    var qi = 0, ringMs = 6 * 1100, labelsAt = -1e9, penY = mid;
+    while (qi < quakes.length && quakes[qi].t < t0 - ringMs) qi++;
+    ctx.lineWidth = 1;
+    for (var x = x0; x <= x1; x++) {
+      var tt = t0 + (x - x0) * msPerPx, env = 0, best = null, bestV = 0;
+      // Sliding start: only shocks still ringing at this column are summed.
+      while (qi < quakes.length && quakes[qi].t < tt - ringMs) qi++;
+      for (var j = qi; j < quakes.length && quakes[j].t <= tt + msPerPx; j++) {
+        var q = quakes[j], age = (tt - q.t) / 1000;
+        if (age < -msPerPx / 1000 || age > q.tau * 6) continue;
+        var v = q.amp * Math.exp(-Math.max(0, age) / q.tau);
+        env += v;
+        if (v > bestV) { bestV = v; best = q; }
+      }
+      var ts = tt / 1000;
+      var noise = (Math.sin(ts * 13.1) + 0.6 * Math.sin(ts * 7.3 + 1) + 0.3 * Math.sin(ts * 31.7 + 2)) * 0.012 * (0.4 + 2 * levelAt(tt));
+      var top = Math.max(2, mid - (env * 0.9 + Math.abs(noise)) * amp + noise * amp * 0.5);
+      var bottom = Math.min(h - 2, mid + (env * (0.75 + 0.25 * Math.sin(ts * 40)) + Math.abs(noise)) * amp + noise * amp * 0.5);
+      ctx.strokeStyle = best && bestV > 0.02 ? CK.rgba(best.col, Math.min(1, 0.45 + bestV)) : CK.rgba('text', 0.55);
+      ctx.beginPath(); ctx.moveTo(x + 0.5, top); ctx.lineTo(x + 0.5, Math.max(top + 1, bottom)); ctx.stroke();
+      if (x === x1) penY = mid + noise * amp + (env ? Math.sin(ts * 37) * env * amp * 0.8 : 0);
+      // Tool names over the bigger shocks, never overlapping
+      if (best && best.tool && bestV > 0.4 && Math.abs(tt - best.t) < msPerPx && x - labelsAt > 46 && h > 70) {
+        labelsAt = x;
+        ctx.fillStyle = CK.rgba(best.col, 0.9);
+        ctx.font = CK.font(8, best.quake ? 'bold' : 'normal');
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(best.quake ? 'M' + best.mag.toFixed(1) + ' ' + best.tool : best.tool, x, Math.max(10, top - 3));
+      }
+    }
+
+    // Recording drum edge and pen
+    ctx.fillStyle = CK.mix('bg', 'dim', 0.12);
+    ctx.fillRect(x1, 0, w - x1, h);
+    ctx.strokeStyle = CK.rgba('dim', 0.5);
+    ctx.beginPath(); ctx.moveTo(x1 + 0.5, 0); ctx.lineTo(x1 + 0.5, h); ctx.stroke();
+    penY = Math.max(3, Math.min(h - 3, penY));
+    ctx.strokeStyle = CK.c.fg;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(w, penY - 6); ctx.lineTo(x1 + 2, penY); ctx.lineTo(w, penY + 6); ctx.stroke();
+    ctx.fillStyle = CK.c.red;
+    ctx.beginPath(); ctx.arc(x1, penY, 2.2, 0, 6.283); ctx.fill();
+    ctx.restore();
     CK.resetCtx(ctx);
-    var b = '脈拍 ' + Math.round(bpm) + ' BPM';
-    if (b !== lastBpm) { lastBpm = b; el('vt-bpm').textContent = b; }
-  }, 60);
+
+    var perMin = 0;
+    for (var m = quakes.length - 1; m >= 0 && quakes[m].t > now - 60000; m--) if (quakes[m].tool && !quakes[m].quake) perMin++;
+    var lastTool = null;
+    for (m = quakes.length - 1; m >= 0 && !lastTool; m--) if (quakes[m].tool) lastTool = quakes[m].tool;
+    var text = alert && now - alert.at < 6000 ? alert.text
+      : '地震計 · ' + perMin + ' calls/min' + (lastTool ? ' · last ' + lastTool : '') + ' · ' + (win >= 60 ? win / 60 + ' min' : win + ' s');
+    if (text !== lastText) {
+      lastText = text;
+      label.textContent = text;
+      label.style.color = alert && now - alert.at < 6000 ? 'var(--t-red)' : 'var(--c-chrome-dim)';
+    }
+  }, 30);
 })();
 </script>

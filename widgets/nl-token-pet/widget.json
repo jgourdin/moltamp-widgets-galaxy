@@ -1,0 +1,17 @@
+{
+  "id": "nl-token-pet",
+  "name": "Token Pet",
+  "version": "1.0.0",
+  "description": "A pixel creature that lives off Claude's work: it munches tokens while Claude writes, gets busy during tool calls, panics on errors, naps when things go quiet and levels up with every finished task and commit, hatching and evolving as it grows. Click it to pet it.",
+  "author": "j0j0",
+  "category": "Night Lounge",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "event.events",
+      "git.status"
+    ]
+  }
+}

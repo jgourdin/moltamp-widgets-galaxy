@@ -1,42 +1,17 @@
 <!--
-  Cyber Vitals — Cyberpunk pack for MOLTamp
-  CPU and memory as vital signs: segmented gauges, Japanese labels, a heartbeat that follows the load, scanlines.
+  Rate Limit Fuel — Mission Control pack for MOLTamp
+  Your 5-hour and 7-day Claude limits as fuel gauges, with the time to the next refuel and how long the current burn rate lasts.
   Author: j0j0 · License: MIT
 -->
-<div id="cy-root" class="vt">
-  <div class="vt-head"><span class="vt-title">生体監視</span><span class="vt-sub">VITALS</span><span class="vt-right" id="vt-up">稼働 --</span></div>
-  <div class="vt-row"><span class="vt-lbl">演算<em>CPU</em></span><div class="vt-bar" id="vt-cpu"></div><span class="vt-val" id="vt-cpu-v">--</span></div>
-  <div class="vt-row"><span class="vt-lbl">記憶<em>MEM</em></span><div class="vt-bar" id="vt-mem"></div><span class="vt-val" id="vt-mem-v">--</span></div>
-  <div class="vt-ecg"><canvas id="cy-canvas"></canvas></div>
-  <div class="vt-foot"><span id="vt-load">負荷 LOAD --</span><span id="vt-bpm">脈拍 -- BPM</span></div>
-  <div class="vt-scan"></div>
-</div>
+<div id="cy-root"><canvas id="cy-canvas"></canvas><div id="cy-label"></div></div>
 
 <style>
-  .vt {
-    position: absolute; inset: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; overflow: hidden;
-    background: var(--c-chrome-bg); color: var(--c-chrome-text); container-type: inline-size;
-    font: calc(clamp(9px, 4.2cqw, 13px) * var(--user-text-scale, 1)) / 1.3 'SF Mono', Menlo, 'Hiragino Sans', monospace;
-  }
-  .vt-head { display: flex; align-items: baseline; gap: 6px; letter-spacing: 0.08em; }
-  .vt-title { color: var(--c-chrome-accent); font-weight: bold; }
-  .vt-sub, .vt-lbl em, .vt-foot { color: var(--c-chrome-dim); }
-  .vt-right { margin-left: auto; color: var(--c-chrome-dim); }
-  .vt-row { display: flex; align-items: center; gap: 8px; }
-  .vt-lbl { width: 5.6em; flex: none; }
-  .vt-lbl em { font-style: normal; margin-left: 0.4em; font-size: 0.85em; }
-  .vt-bar { flex: 1; display: flex; gap: 2px; height: 0.95em; }
-  .vt-bar i { flex: 1; background: var(--c-chrome-border); border-radius: 1px; transition: background 0.4s; }
-  .vt-bar i.on { background: var(--t-green); }
-  .vt-bar i.warn { background: var(--t-yellow); }
-  .vt-bar i.crit { background: var(--t-red); }
-  .vt-val { width: 3.6em; text-align: right; flex: none; color: var(--c-chrome-accent); }
-  .vt-ecg { flex: 1; min-height: 36px; border-top: 1px solid var(--c-chrome-border); border-bottom: 1px solid var(--c-chrome-border); }
-  .vt-ecg canvas { display: block; width: 100%; height: 100%; }
-  .vt-foot { display: flex; justify-content: space-between; letter-spacing: 0.05em; }
-  .vt-scan {
-    position: absolute; inset: 0; pointer-events: none; opacity: 0.35;
-    background: repeating-linear-gradient(to bottom, transparent 0 2px, var(--c-chrome-bg) 2px 3px);
+  #cy-root { position: absolute; inset: 0; overflow: hidden; background: var(--c-chrome-bg); container-type: size; }
+  #cy-canvas { display: block; width: 100%; height: 100%; }
+  #cy-label {
+    position: absolute; left: 8px; bottom: 6px; pointer-events: none; letter-spacing: 0.08em;
+    color: var(--c-chrome-dim); text-shadow: 0 0 6px var(--c-chrome-bg);
+    font: calc(clamp(8px, 3.4cqw, 12px) * var(--user-text-scale, 1)) 'SF Mono', Menlo, 'Hiragino Sans', monospace;
   }
 </style>
 
@@ -340,92 +315,175 @@ var CK = (function () {
   };
 })();
 
-// Cyber Vitals: system.getStats as vital signs; the heartbeat rate follows CPU load.
+// Rate Limit Fuel: stats.read rate limits as fuel gauges (remaining = 100 - used), reset countdown and burn-rate ETA.
 (function () {
   'use strict';
-  var SEGMENTS = 16;
   var S = CK.surface(document.getElementById('cy-canvas'));
-  var el = function (id) { return document.getElementById(id); };
-  var bars = { cpu: el('vt-cpu'), mem: el('vt-mem') };
-  var vitals = { cpu: null, mem: null, load: null, uptime: null };
-  var cursor = 0, phase = 0, prevY = null, bpm = 60, lastBpm = '';
+  var label = document.getElementById('cy-label');
+  var WINDOW_MS = 15 * 60 * 1000;
+  var gauges = [
+    { key: '5h', names: ['rate5h', 'rate_5h', 'fiveHour', 'five_hour'], label: '5H', data: null, shown: 0, samples: [] },
+    { key: '7d', names: ['rate7d', 'rate_7d', 'sevenDay', 'seven_day'], label: '7D', data: null, shown: 0, samples: [] }
+  ];
+  var linked = false, t = 0, lastText = '';
 
-  Object.keys(bars).forEach(function (k) {
-    for (var i = 0; i < SEGMENTS; i++) bars[k].appendChild(document.createElement('i'));
-  });
+  function num(v) { var n = typeof v === 'string' ? parseFloat(v) : v; return typeof n === 'number' && isFinite(n) ? n : null; }
+  function first(o, names) { for (var i = 0; i < names.length; i++) { var v = num(o[names[i]]); if (v !== null) return v; } return null; }
 
-  function paintBar(bar, pct) {
-    var on = pct === null ? 0 : Math.round(Math.max(0, Math.min(100, pct)) / 100 * SEGMENTS);
-    for (var i = 0; i < SEGMENTS; i++) {
-      var r = (i + 1) / SEGMENTS;
-      bar.children[i].className = i < on ? (r > 0.85 ? 'crit' : r > 0.6 ? 'warn' : 'on') : '';
+  // The shape is not documented: a number, or an object with a used/remaining percentage and a reset time.
+  function readRate(v) {
+    if (v === undefined || v === null) return null;
+    var used = null, reset = null;
+    if (typeof v === 'object') {
+      used = first(v, ['used_percentage', 'usedPercentage', 'used_percent', 'used', 'pct', 'percent', 'percentage', 'utilization']);
+      var rem = first(v, ['remaining_percentage', 'remainingPercentage', 'remaining']);
+      if (used === null && rem !== null) used = 100 - rem;
+      var r = v.resets_at !== undefined ? v.resets_at : v.resetsAt !== undefined ? v.resetsAt : v.reset_at !== undefined ? v.reset_at : v.resetAt;
+      if (typeof r === 'number') reset = r < 1e12 ? r * 1000 : r;
+      else if (typeof r === 'string') reset = Date.parse(r);
+    } else {
+      used = num(v);
     }
+    if (used === null) return null;
+    if (used > 0 && used <= 1 && used % 1 !== 0) used *= 100; // fraction
+    return { used: Math.max(0, Math.min(100, used)), reset: isFinite(reset) ? reset : null };
+  }
+
+  function findRate(s, g) {
+    for (var i = 0; i < g.names.length; i++) if (s[g.names[i]] !== undefined) return readRate(s[g.names[i]]);
+    var nest = s.rateLimits || s.rate_limits || s.limits;
+    if (nest && typeof nest === 'object') for (i = 0; i < g.names.length; i++) if (nest[g.names[i]] !== undefined) return readRate(nest[g.names[i]]);
+    return null;
   }
 
   function read() {
-    CK.call('system.getStats').then(function (s) {
+    CK.call('stats.read').then(function (s) {
       s = s || {};
-      var cpu = s.cpu || {}, mem = s.memory || {};
-      vitals.cpu = typeof cpu.usagePct === 'number' ? cpu.usagePct : null;
-      vitals.mem = typeof mem.usagePct === 'number' ? mem.usagePct : null;
-      vitals.load = typeof cpu.loadAvg1m === 'number' ? cpu.loadAvg1m : null;
-      vitals.uptime = typeof s.uptime === 'number' ? s.uptime : null;
-      paintBar(bars.cpu, vitals.cpu);
-      paintBar(bars.mem, vitals.mem);
-      el('vt-cpu-v').textContent = vitals.cpu === null ? '--' : Math.round(vitals.cpu) + '%';
-      el('vt-mem-v').textContent = vitals.mem === null ? '--' : Math.round(vitals.mem) + '%';
-      el('vt-load').textContent = '負荷 LOAD ' + (vitals.load === null ? '--' : vitals.load.toFixed(2));
-      var up = vitals.uptime === null ? '--' :
-        (window.moltamp && moltamp.fmt && moltamp.fmt.duration ? moltamp.fmt.duration(vitals.uptime) : Math.round(vitals.uptime / 3600) + 'h');
-      el('vt-up').textContent = '稼働 ' + up;
-    }).catch(function () {
-      paintBar(bars.cpu, null);
-      paintBar(bars.mem, null);
-      el('vt-cpu-v').textContent = el('vt-mem-v').textContent = '--';
-    });
+      var now = Date.now(), any = false;
+      gauges.forEach(function (g) {
+        g.data = findRate(s, g);
+        if (!g.data) return;
+        any = true;
+        g.samples.push([now, g.data.used]);
+        while (g.samples.length && now - g.samples[0][0] > WINDOW_MS) g.samples.shift();
+      });
+      linked = any;
+    }).catch(function () { linked = false; });
   }
   read();
-  CK.poll(2000, read);
+  CK.poll(3000, read);
 
-  // PQRST-like beat shape over one cycle (0..1).
-  function beat(p) {
-    function g(c, w, a) { var d = (p - c) / w; return a * Math.exp(-d * d); }
-    return g(0.18, 0.035, 0.12) - g(0.29, 0.012, 0.12) + g(0.31, 0.012, 1) - g(0.335, 0.015, 0.28) + g(0.55, 0.06, 0.22);
+  function dur(ms) {
+    if (!(ms > 0)) return '--';
+    var m = Math.round(ms / 60000), d = Math.floor(m / 1440), hh = Math.floor((m % 1440) / 60), mm = m % 60;
+    return d ? d + 'd ' + hh + 'h' : hh ? hh + 'h ' + (mm < 10 ? '0' : '') + mm + 'm' : mm + 'm';
+  }
+
+  // Minutes of fuel left at the burn rate measured over the last 15 minutes.
+  function eta(g) {
+    var sm = g.samples;
+    if (sm.length < 3) return null;
+    var dtm = (sm[sm.length - 1][0] - sm[0][0]) / 60000, du = sm[sm.length - 1][1] - sm[0][1];
+    if (dtm < 1 || du <= 0.05) return null;
+    return (100 - sm[sm.length - 1][1]) / (du / dtm) * 60000;
+  }
+
+  function tone(rem) { return rem > 50 ? 'green' : rem > 20 ? 'yellow' : 'red'; }
+
+  function drawGauge(ctx, g, cx, cy, R) {
+    var rem = g.data ? 100 - g.data.used : 0;
+    g.shown += ((g.data ? rem : 0) - g.shown) * 0.12;
+    var col = g.data ? tone(g.shown) : 'dim';
+    var A0 = Math.PI, A1 = Math.PI * 2;
+    // Track and coloured fuel arc
+    ctx.lineCap = 'butt';
+    ctx.lineWidth = Math.max(4, R * 0.16);
+    ctx.strokeStyle = CK.rgba('dim', 0.2);
+    ctx.beginPath(); ctx.arc(cx, cy, R, A0, A1); ctx.stroke();
+    if (g.data) {
+      ctx.strokeStyle = CK.c[col];
+      ctx.beginPath(); ctx.arc(cx, cy, R, A0, A0 + Math.PI * g.shown / 100); ctx.stroke();
+    }
+    // Ticks: E, 1/4, 1/2, 3/4, F
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = CK.rgba('text', 0.6);
+    ctx.font = CK.font(Math.max(8, R * 0.16), 'bold');
+    ctx.fillStyle = CK.c.text;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (var k = 0; k <= 4; k++) {
+      var a = A0 + Math.PI * k / 4, r1 = R * 0.72, r2 = R * (k % 2 ? 0.8 : 0.84);
+      ctx.beginPath(); ctx.moveTo(cx + Math.cos(a) * r1, cy + Math.sin(a) * r1); ctx.lineTo(cx + Math.cos(a) * r2, cy + Math.sin(a) * r2); ctx.stroke();
+    }
+    ctx.fillText('E', cx - R * 0.6, cy - R * 0.1);
+    ctx.fillText('F', cx + R * 0.6, cy - R * 0.1);
+    // Needle
+    var na = A0 + Math.PI * g.shown / 100, wobble = g.data ? Math.sin(t * 9) * 0.004 : 0;
+    ctx.strokeStyle = CK.c.fg;
+    ctx.lineWidth = Math.max(1.5, R * 0.035);
+    ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(na + wobble) * R * 0.78, cy + Math.sin(na + wobble) * R * 0.78); ctx.stroke();
+    ctx.fillStyle = CK.c.accent;
+    ctx.beginPath(); ctx.arc(cx, cy, R * 0.07, 0, 6.283); ctx.fill();
+    // Readout
+    ctx.fillStyle = g.data ? CK.c.fg : CK.c.dim;
+    ctx.font = CK.font(Math.max(11, R * 0.3), 'bold');
+    ctx.fillText(g.data ? Math.round(g.shown) + '%' : '--', cx, cy + R * 0.28);
+    ctx.font = CK.font(Math.max(8, R * 0.14));
+    ctx.fillStyle = CK.c.dim;
+    ctx.fillText(g.label + ' 燃料', cx, cy - R * 0.36);
+    var line1 = g.data && g.data.reset ? 'refuel in ' + dur(g.data.reset - Date.now()) : g.data ? 'refuel time --' : 'no data';
+    var e = g.data ? eta(g) : null;
+    var line2 = e ? '≈ ' + dur(e) + ' at this pace' : g.data ? 'steady burn' : '';
+    ctx.fillStyle = CK.c.text;
+    ctx.fillText(line1, cx, cy + R * 0.55);
+    if (line2) { ctx.fillStyle = e && e < 3600e3 ? CK.c.red : CK.c.dim; ctx.fillText(line2, cx, cy + R * 0.72); }
+    if (g.data && g.shown < 10 && Math.sin(t * 7) > 0) {
+      ctx.fillStyle = CK.c.red;
+      ctx.font = CK.font(Math.max(9, R * 0.16), 'bold');
+      ctx.fillText('LOW FUEL', cx, cy - R * 0.62);
+    }
   }
 
   CK.loop(function (dt) {
     S.fit();
+    S.resized = false;
     var ctx = S.ctx, w = S.w, h = S.h;
-    if (S.resized) { ctx.fillStyle = CK.c.bg; ctx.fillRect(0, 0, w, h); cursor = 0; prevY = null; S.resized = false; }
-    var cpu = vitals.cpu === null ? 10 : vitals.cpu;
-    bpm += ((55 + cpu * 0.95) - bpm) * (1 - Math.exp(-dt / 1.5));
-    var speed = Math.max(40, w / 3); // px per second, about three seconds per sweep
-    var steps = Math.max(1, Math.round(speed * dt / 1.5));
-    var tone = cpu > 85 ? 'red' : cpu > 60 ? 'yellow' : 'green';
-    for (var s = 0; s < steps; s++) {
-      var dx = speed * dt / steps;
-      phase = (phase + dx / speed * bpm / 60) % 1;
-      var y = h * 0.62 - beat(phase) * h * 0.5;
-      // Erase a band ahead of the cursor, like a hospital monitor.
-      ctx.fillStyle = CK.c.bg;
-      ctx.fillRect(cursor, 0, 14, h);
-      if (prevY !== null) {
-        ctx.strokeStyle = CK.c[tone];
-        ctx.lineWidth = 1.6;
-        ctx.beginPath();
-        ctx.moveTo(cursor - dx, prevY);
-        ctx.lineTo(cursor, y);
-        ctx.stroke();
-      }
-      prevY = y;
-      cursor += dx;
-      if (cursor > w) { cursor = 0; prevY = null; }
+    t += dt;
+    ctx.fillStyle = CK.c.bg;
+    ctx.fillRect(0, 0, w, h);
+
+    var wide = w > h * 1.3, R;
+    if (wide) {
+      R = Math.min(w / 5.6, h / 1.8);
+      drawGauge(ctx, gauges[0], w * 0.27, h * 0.52, R);
+      drawGauge(ctx, gauges[1], w * 0.73, h * 0.52, R);
+    } else {
+      R = Math.min(w / 2.6, h / 3.6);
+      drawGauge(ctx, gauges[0], w / 2, h * 0.3, R);
+      drawGauge(ctx, gauges[1], w / 2, h * 0.76, R);
     }
-    ctx.fillStyle = CK.c[tone];
-    ctx.fillRect(cursor - 1.5, prevY === null ? h / 2 : prevY - 1.5, 3, 3);
+    if (!linked) {
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = CK.rgba('bg', 0.75);
+      ctx.fillRect(0, h / 2 - 22, w, 44);
+      ctx.font = CK.font(Math.max(10, Math.min(w / 22, 14)), 'bold');
+      ctx.fillStyle = CK.c.yellow;
+      ctx.fillText('NO TELEMETRY 無信号', w / 2, h / 2 - 7);
+      ctx.font = CK.font(Math.max(8, Math.min(w / 34, 11)));
+      ctx.fillStyle = CK.c.text;
+      ctx.fillText('rate limits need the MOLTamp status line', w / 2, h / 2 + 9);
+    }
     CK.resetCtx(ctx);
-    var b = '脈拍 ' + Math.round(bpm) + ' BPM';
-    if (b !== lastBpm) { lastBpm = b; el('vt-bpm').textContent = b; }
-  }, 60);
+
+    var low = gauges.filter(function (g) { return g.data && 100 - g.data.used < 20; }).length;
+    var text = !linked ? '燃料計 · offline' : low ? '燃料計 · 警告 LOW' : '燃料計 · OK';
+    if (text !== lastText) {
+      lastText = text;
+      label.textContent = text;
+      label.style.color = low ? 'var(--t-red)' : 'var(--c-chrome-dim)';
+    }
+  });
 })();
 </script>

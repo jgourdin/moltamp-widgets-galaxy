@@ -1,0 +1,370 @@
+/* ═══════════════════════════════════════════════════════════════
+   GALAXY — MOLTamp Widgets Galaxy skin
+   Deep-space chrome in vaporwave pink, cyan, purple and pale yellow.
+   Panels drift in a faint nebula under a twinkling star field; an aurora
+   line runs under the vibes banner and the shell breathes with Claude.
+
+   Author: j0j0 · License: MIT (theme.css, skin.json, assets/stars.svg)
+
+   assets/vibes.gif shows six widgets of the MOLTamp Widgets Galaxy, ports of
+   Shadertoy shaders under CC BY-NC-SA 3.0
+   (https://creativecommons.org/licenses/by-nc-sa/3.0/), so that file follows
+   CC BY-NC-SA 3.0 — attribution, non-commercial, share-alike:
+     Hexagonal Hive Lattice — nobody93          https://www.shadertoy.com/view/73KGRd
+     Sunset Drive Visualizer — TheWindowStreamz, fork of Michal Klos
+                                                https://www.shadertoy.com/view/dsXyRj
+     Infinite Hamsa — noztol                    https://www.shadertoy.com/view/7XK3Rc
+     Fractal Land — Kali                        https://www.shadertoy.com/view/XsBXWt
+     Coral Reef Y28 — Yusef28                   https://www.shadertoy.com/view/7X3GRS
+     Synthwave audio removed — axiomgraph       https://www.shadertoy.com/view/clsfRr
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── Terminal contract ─────────────────────────────────────── */
+  --t-foreground:    #e6e1ff;
+  --t-background:    #07051a;
+  --t-cursor:        #ff71ce;
+  --t-cursor-accent: #07051a;
+  --t-selection:     rgba(185, 103, 255, 0.3);
+
+  --t-black:   #1a1533;
+  --t-red:     #ff5c7a;
+  --t-green:   #05ffa1;
+  --t-yellow:  #fffb96;
+  --t-blue:    #7b8cff;
+  --t-magenta: #b967ff;
+  --t-cyan:    #01cdfe;
+  --t-white:   #d8d2f0;
+
+  --t-bright-black:   #7a70a8;
+  --t-bright-red:     #ff8a9f;
+  --t-bright-green:   #7dffc8;
+  --t-bright-yellow:  #fffcc8;
+  --t-bright-blue:    #a9b3ff;
+  --t-bright-magenta: #d29bff;
+  --t-bright-cyan:    #7ae6ff;
+  --t-bright-white:   #ffffff;
+
+  /* ── Chrome contract ───────────────────────────────────────── */
+  --c-chrome-bg:     #0c0926;
+  --c-chrome-text:   #b9aee6;
+  --c-chrome-border: #2a2155;
+  --c-chrome-accent: #ff71ce;
+  --c-chrome-dim:    #8579b5;
+  --c-chrome-hover:  #1a1440;
+
+  /* ── Typography & layout ───────────────────────────────────── */
+  --font-terminal: 'SF Mono', 'JetBrains Mono', 'Menlo', monospace;
+  --font-chrome:   'SF Pro Display', 'Inter', -apple-system, sans-serif;
+  --radius:        6px;
+
+  /* ── Built-in effects ──────────────────────────────────────── */
+  --effect-glow:     1;
+  --glow-intensity:  14px;
+  --c-glow:          rgba(255, 113, 206, 0.16);
+
+  /* ── Custom effects (0 = off, 1 = default, 2 = boost) ─────── */
+  --effect-nebula:      1;
+  --effect-starfield:   1;
+  --effect-aurora:      1;
+  --effect-vibes-glow:  1;
+  --effect-claude-pulse: 1;
+
+  /* ── Skin palette ──────────────────────────────────────────── */
+  --skin-pink:        #ff71ce;
+  --skin-cyan:        #01cdfe;
+  --skin-purple:      #b967ff;
+  --skin-yellow:      #fffb96;
+  --skin-mint:        #05ffa1;
+  --skin-error:       #ff5c7a;
+
+  --skin-space:        #07051a;
+  --skin-panel-bg:     #0a0722;
+  --skin-titlebar-bg:  linear-gradient(90deg, #120b33 0%, #0c0926 45%, #0a1030 100%);
+  --skin-statusbar-bg: #080620;
+  --skin-border:       #2a2155;
+  --skin-border-soft:  #1d1740;
+  --skin-track:        #1a1440;
+  --skin-tab-active:   #ffffff;
+
+  --skin-nebula-left: radial-gradient(ellipse 90% 45% at 15% 20%, rgba(185, 103, 255, 0.16), transparent 70%),
+                      radial-gradient(ellipse 80% 40% at 85% 80%, rgba(1, 205, 254, 0.1), transparent 70%);
+  --skin-nebula-right: radial-gradient(ellipse 90% 45% at 85% 25%, rgba(255, 113, 206, 0.14), transparent 70%),
+                       radial-gradient(ellipse 80% 40% at 10% 85%, rgba(185, 103, 255, 0.12), transparent 70%);
+  --skin-nebula-bottom: linear-gradient(90deg, rgba(185, 103, 255, 0.12), rgba(1, 205, 254, 0.08), rgba(255, 113, 206, 0.12));
+  --skin-aurora: linear-gradient(90deg, #01cdfe, #b967ff, #ff71ce, #fffb96, #01cdfe);
+  --skin-gauge:  linear-gradient(90deg, #01cdfe 0%, #b967ff 55%, #ff71ce 100%);
+
+  --skin-glow-pink:    rgba(255, 113, 206, 0.28);
+  --skin-glow-cyan:    rgba(1, 205, 254, 0.22);
+  --skin-glow-purple:  rgba(185, 103, 255, 0.3);
+  --skin-glow-mint:    rgba(5, 255, 161, 0.3);
+  --skin-glow-none:    rgba(185, 103, 255, 0);
+  --skin-error-glow:   rgba(255, 92, 122, 0.35);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SHELL & TITLE BAR
+   ═══════════════════════════════════════════════════════════════ */
+
+.moltamp-shell {
+  background: var(--skin-space);
+}
+
+.moltamp-titlebar {
+  background: var(--skin-titlebar-bg);
+  border-bottom: 1px solid var(--skin-border);
+  transition: border-color 0.4s ease;
+}
+
+.moltamp-titlebar > span:first-child {
+  color: var(--skin-pink);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+/* Waiting on the user: the title bar edge turns yellow, like the tab badge. */
+[data-shell-state="permission"] .moltamp-titlebar {
+  border-bottom-color: var(--t-yellow);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   VIBES — transparent canvas, aurora line along the bottom edge
+   ═══════════════════════════════════════════════════════════════ */
+
+.moltamp-vibes {
+  position: relative;
+  border-bottom: 1px solid var(--skin-border);
+}
+
+.moltamp-vibes::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: var(--skin-aurora);
+  background-size: 300% 100%;
+  opacity: calc(0.85 * var(--effect-aurora));
+  animation: galaxy-aurora 12s linear infinite;
+  pointer-events: none;
+}
+
+[data-shell-state="thinking"] .moltamp-vibes::after,
+[data-shell-state="tool-use"] .moltamp-vibes::after {
+  opacity: var(--effect-aurora);
+  animation: galaxy-aurora 3s linear infinite;
+}
+
+@keyframes galaxy-aurora {
+  from { background-position: 0% 0; }
+  to   { background-position: 300% 0; }
+}
+
+/* High activity: the banner glows from the inside. */
+[data-activity="high"] .moltamp-vibes {
+  animation: galaxy-vibes-glow 2.4s ease-in-out infinite;
+}
+
+@keyframes galaxy-vibes-glow {
+  0%, 100% { box-shadow: inset 0 0 calc(12px * var(--effect-vibes-glow)) var(--skin-glow-purple); }
+  50%      { box-shadow: inset 0 0 calc(34px * var(--effect-vibes-glow)) var(--skin-glow-pink); }
+}
+
+/* System signal: an error tints the banner red (exempt from gating). */
+[data-shell-state="error"] .moltamp-vibes {
+  box-shadow: inset 0 0 24px var(--skin-error-glow);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   PANELS — nebula clouds and a star field behind the content
+   ═══════════════════════════════════════════════════════════════ */
+
+.moltamp-panel-left,
+.moltamp-panel-right {
+  position: relative;
+  isolation: isolate;
+  background: var(--skin-panel-bg);
+}
+
+.moltamp-panel-left {
+  border-right: 1px solid var(--skin-border);
+}
+
+.moltamp-panel-right {
+  border-left: 1px solid var(--skin-border);
+}
+
+.moltamp-panel-left::before,
+.moltamp-panel-right::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  opacity: var(--effect-nebula);
+  pointer-events: none;
+}
+
+.moltamp-panel-left::before {
+  background: var(--skin-nebula-left);
+}
+
+.moltamp-panel-right::before {
+  background: var(--skin-nebula-right);
+}
+
+.moltamp-panel-left::after,
+.moltamp-panel-right::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image: url('./assets/stars.svg');
+  background-size: 240px 240px;
+  background-repeat: repeat;
+  opacity: calc(0.55 * var(--effect-starfield));
+  animation: galaxy-twinkle 7s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.moltamp-panel-right::after {
+  background-position: 120px 60px;
+  animation-delay: -3.5s;
+}
+
+@keyframes galaxy-twinkle {
+  0%, 100% { filter: opacity(1); }
+  50%      { filter: opacity(0.45); }
+}
+
+.moltamp-panel-bottom {
+  position: relative;
+  isolation: isolate;
+  background: var(--skin-panel-bg);
+  border-top: 1px solid var(--skin-border);
+}
+
+.moltamp-panel-bottom::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--skin-nebula-bottom);
+  opacity: var(--effect-nebula);
+  pointer-events: none;
+}
+
+.moltamp-statusbar {
+  background: var(--skin-statusbar-bg);
+  border-top: 1px solid var(--skin-border-soft);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TERMINAL — border follows Claude's state
+   ═══════════════════════════════════════════════════════════════ */
+
+.moltamp-terminal {
+  border: 1px solid var(--skin-border-soft);
+  border-radius: var(--radius);
+  transition: border-color 0.4s ease;
+}
+
+[data-shell-state="tool-use"] .moltamp-terminal {
+  border-color: var(--skin-cyan);
+}
+
+[data-shell-state="streaming"] .moltamp-terminal {
+  border-color: var(--skin-purple);
+}
+
+[data-shell-state="permission"] .moltamp-terminal {
+  border-color: var(--t-yellow);
+}
+
+[data-shell-state="error"] .moltamp-terminal {
+  border-color: var(--skin-error);
+}
+
+/* Thinking: a slow purple breath around the terminal. */
+[data-shell-state="thinking"] .moltamp-terminal {
+  animation: galaxy-breath 2.2s ease-in-out infinite;
+}
+
+@keyframes galaxy-breath {
+  0%, 100% { box-shadow: 0 0 calc(4px * var(--effect-claude-pulse)) var(--skin-glow-none); }
+  50%      { box-shadow: 0 0 calc(16px * var(--effect-claude-pulse)) var(--skin-glow-purple); }
+}
+
+/* Done: one mint flash, then back to calm. */
+[data-shell-state="complete"] .moltamp-terminal {
+  animation: galaxy-done 1.4s ease-out 1;
+}
+
+@keyframes galaxy-done {
+  0%   { box-shadow: 0 0 calc(18px * var(--effect-claude-pulse)) var(--skin-glow-mint); }
+  100% { box-shadow: 0 0 0 var(--skin-glow-none); }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   TABS
+   ═══════════════════════════════════════════════════════════════ */
+
+.moltamp-tabbar {
+  border-bottom: 1px solid var(--skin-border-soft);
+}
+
+.moltamp-tab {
+  color: var(--c-chrome-dim);
+  transition: color 0.2s ease, background-color 0.2s ease;
+}
+
+.moltamp-tab:hover {
+  color: var(--c-chrome-text);
+  background-color: var(--c-chrome-hover);
+}
+
+.moltamp-tab-active {
+  color: var(--skin-tab-active);
+  border-bottom: 2px solid var(--skin-pink);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   STATS & GAUGES
+   ═══════════════════════════════════════════════════════════════ */
+
+.moltamp-model-badge {
+  color: var(--skin-pink);
+  letter-spacing: 0.06em;
+}
+
+.moltamp-context-track {
+  background: var(--skin-track);
+  border-radius: var(--radius);
+}
+
+.moltamp-context-fill {
+  background: var(--skin-gauge);
+  border-radius: var(--radius);
+}
+
+.moltamp-context-value {
+  color: var(--skin-cyan);
+}
+
+.moltamp-stat-label {
+  color: var(--c-chrome-dim);
+}
+
+.moltamp-stat-value {
+  color: var(--t-foreground);
+}
+
+.moltamp-stat-cost .moltamp-stat-value {
+  color: var(--skin-yellow);
+}
+
+.moltamp-stat-rate-5h .moltamp-stat-value,
+.moltamp-stat-rate-7d .moltamp-stat-value {
+  color: var(--skin-cyan);
+}

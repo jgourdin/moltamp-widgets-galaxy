@@ -1,0 +1,18 @@
+{
+  "id": "nl-cassette-deck",
+  "name": "Cassette Deck",
+  "version": "1.0.0",
+  "description": "Whatever your Mac is playing, on a cassette: the reels spin, the tape winds from one reel to the other as the track goes on, and the VU meters bounce. Previous, play/pause and next buttons drive your music app.",
+  "author": "j0j0",
+  "category": "Night Lounge",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "ipc": [
+      "music.nowPlaying",
+      "music.playPause",
+      "music.next",
+      "music.previous"
+    ]
+  }
+}

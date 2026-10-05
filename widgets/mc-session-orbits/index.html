@@ -1,42 +1,17 @@
 <!--
-  Cyber Vitals — Cyberpunk pack for MOLTamp
-  CPU and memory as vital signs: segmented gauges, Japanese labels, a heartbeat that follows the load, scanlines.
+  Session Orbits — Mission Control pack for MOLTamp
+  Every Claude Code session becomes a planet orbiting Claude: the busy one glows and leaves a comet trail, sub-agents turn into moons, and a planet waiting for your permission pulses. Click a planet for its details.
   Author: j0j0 · License: MIT
 -->
-<div id="cy-root" class="vt">
-  <div class="vt-head"><span class="vt-title">生体監視</span><span class="vt-sub">VITALS</span><span class="vt-right" id="vt-up">稼働 --</span></div>
-  <div class="vt-row"><span class="vt-lbl">演算<em>CPU</em></span><div class="vt-bar" id="vt-cpu"></div><span class="vt-val" id="vt-cpu-v">--</span></div>
-  <div class="vt-row"><span class="vt-lbl">記憶<em>MEM</em></span><div class="vt-bar" id="vt-mem"></div><span class="vt-val" id="vt-mem-v">--</span></div>
-  <div class="vt-ecg"><canvas id="cy-canvas"></canvas></div>
-  <div class="vt-foot"><span id="vt-load">負荷 LOAD --</span><span id="vt-bpm">脈拍 -- BPM</span></div>
-  <div class="vt-scan"></div>
-</div>
+<div id="cy-root"><canvas id="cy-canvas"></canvas><div id="cy-label"></div></div>
 
 <style>
-  .vt {
-    position: absolute; inset: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; overflow: hidden;
-    background: var(--c-chrome-bg); color: var(--c-chrome-text); container-type: inline-size;
-    font: calc(clamp(9px, 4.2cqw, 13px) * var(--user-text-scale, 1)) / 1.3 'SF Mono', Menlo, 'Hiragino Sans', monospace;
-  }
-  .vt-head { display: flex; align-items: baseline; gap: 6px; letter-spacing: 0.08em; }
-  .vt-title { color: var(--c-chrome-accent); font-weight: bold; }
-  .vt-sub, .vt-lbl em, .vt-foot { color: var(--c-chrome-dim); }
-  .vt-right { margin-left: auto; color: var(--c-chrome-dim); }
-  .vt-row { display: flex; align-items: center; gap: 8px; }
-  .vt-lbl { width: 5.6em; flex: none; }
-  .vt-lbl em { font-style: normal; margin-left: 0.4em; font-size: 0.85em; }
-  .vt-bar { flex: 1; display: flex; gap: 2px; height: 0.95em; }
-  .vt-bar i { flex: 1; background: var(--c-chrome-border); border-radius: 1px; transition: background 0.4s; }
-  .vt-bar i.on { background: var(--t-green); }
-  .vt-bar i.warn { background: var(--t-yellow); }
-  .vt-bar i.crit { background: var(--t-red); }
-  .vt-val { width: 3.6em; text-align: right; flex: none; color: var(--c-chrome-accent); }
-  .vt-ecg { flex: 1; min-height: 36px; border-top: 1px solid var(--c-chrome-border); border-bottom: 1px solid var(--c-chrome-border); }
-  .vt-ecg canvas { display: block; width: 100%; height: 100%; }
-  .vt-foot { display: flex; justify-content: space-between; letter-spacing: 0.05em; }
-  .vt-scan {
-    position: absolute; inset: 0; pointer-events: none; opacity: 0.35;
-    background: repeating-linear-gradient(to bottom, transparent 0 2px, var(--c-chrome-bg) 2px 3px);
+  #cy-root { position: absolute; inset: 0; overflow: hidden; background: var(--c-chrome-bg); container-type: size; }
+  #cy-canvas { display: block; width: 100%; height: 100%; }
+  #cy-label {
+    position: absolute; left: 8px; bottom: 6px; pointer-events: none; letter-spacing: 0.08em;
+    color: var(--c-chrome-dim); text-shadow: 0 0 6px var(--c-chrome-bg);
+    font: calc(clamp(8px, 3.4cqw, 12px) * var(--user-text-scale, 1)) 'SF Mono', Menlo, 'Hiragino Sans', monospace;
   }
 </style>
 
@@ -340,92 +315,233 @@ var CK = (function () {
   };
 })();
 
-// Cyber Vitals: system.getStats as vital signs; the heartbeat rate follows CPU load.
+// Session Orbits: every Claude Code session seen in the hook events is a planet orbiting Claude (the sun).
 (function () {
   'use strict';
-  var SEGMENTS = 16;
   var S = CK.surface(document.getElementById('cy-canvas'));
-  var el = function (id) { return document.getElementById(id); };
-  var bars = { cpu: el('vt-cpu'), mem: el('vt-mem') };
-  var vitals = { cpu: null, mem: null, load: null, uptime: null };
-  var cursor = 0, phase = 0, prevY = null, bpm = 60, lastBpm = '';
+  var label = document.getElementById('cy-label');
+  var MAX_PLANETS = 8, ACTIVE_MS = 20000, QUIET_MS = 10 * 60e3, TRAIL = 26;
+  var COLS = ['accent', 'cyan', 'magenta', 'green', 'yellow', 'blue'];
+  var sessions = {}, t = 0, lastText = '', picked = null, pickedUntil = 0, drawn = [];
+  var bg = (function () {
+    var r = CK.prng(0.4242), list = [];
+    for (var i = 0; i < 120; i++) list.push({ x: r(), y: r(), s: 0.3 + r() * 1.1, p: r() * 6.283 });
+    return list;
+  })();
 
-  Object.keys(bars).forEach(function (k) {
-    for (var i = 0; i < SEGMENTS; i++) bars[k].appendChild(document.createElement('i'));
-  });
+  function project(cwd) {
+    var parts = String(cwd || '').split('/').filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : '';
+  }
 
-  function paintBar(bar, pct) {
-    var on = pct === null ? 0 : Math.round(Math.max(0, Math.min(100, pct)) / 100 * SEGMENTS);
-    for (var i = 0; i < SEGMENTS; i++) {
-      var r = (i + 1) / SEGMENTS;
-      bar.children[i].className = i < on ? (r > 0.85 ? 'crit' : r > 0.6 ? 'warn' : 'on') : '';
+  function session(id, cwd) {
+    var s = sessions[id];
+    if (!s) {
+      s = sessions[id] = { id: id, name: '', calls: 0, agents: 0, first: Infinity, last: 0, phase: CK.hash(id) * 6.283,
+        col: COLS[Math.floor(CK.hash(id + '#c') * COLS.length)], flare: 0, fail: 0, waiting: false, trail: [], ctx: null, model: '' };
+    }
+    if (!s.name && cwd) s.name = project(cwd);
+    return s;
+  }
+
+  function ingest(events, history) {
+    for (var i = 0; i < events.length; i++) {
+      var e = events[i], id = e._session || e.session_id;
+      if (!id) continue;
+      var s = session(String(id), e.cwd), ts = Number(e._ts) || Date.now();
+      var hook = String(e.hook_event_name || e._hook || '');
+      s.first = Math.min(s.first, ts);
+      s.last = Math.max(s.last, ts);
+      if (/^Pre/i.test(hook) && e.tool_name) {
+        s.calls++;
+        if (/^(Agent|Task)$/.test(e.tool_name)) s.agents++;
+        if (!history) s.flare = 1;
+        s.waiting = false;
+      } else if (/^Notification$/i.test(hook)) {
+        // Claude Code notifies both "needs your permission" and "waiting for your input"; only the first blocks a tool.
+        s.waiting = /permission/i.test(String(e.message || ''));
+      } else if (/^(UserPromptSubmit|PostToolUse|Stop|SessionEnd)$/i.test(hook)) {
+        s.waiting = false;
+      }
+      if (!history && CK.isFailure(e)) s.fail = 1;
     }
   }
+  CK.onEvents(ingest);
 
-  function read() {
-    CK.call('system.getStats').then(function (s) {
-      s = s || {};
-      var cpu = s.cpu || {}, mem = s.memory || {};
-      vitals.cpu = typeof cpu.usagePct === 'number' ? cpu.usagePct : null;
-      vitals.mem = typeof mem.usagePct === 'number' ? mem.usagePct : null;
-      vitals.load = typeof cpu.loadAvg1m === 'number' ? cpu.loadAvg1m : null;
-      vitals.uptime = typeof s.uptime === 'number' ? s.uptime : null;
-      paintBar(bars.cpu, vitals.cpu);
-      paintBar(bars.mem, vitals.mem);
-      el('vt-cpu-v').textContent = vitals.cpu === null ? '--' : Math.round(vitals.cpu) + '%';
-      el('vt-mem-v').textContent = vitals.mem === null ? '--' : Math.round(vitals.mem) + '%';
-      el('vt-load').textContent = '負荷 LOAD ' + (vitals.load === null ? '--' : vitals.load.toFixed(2));
-      var up = vitals.uptime === null ? '--' :
-        (window.moltamp && moltamp.fmt && moltamp.fmt.duration ? moltamp.fmt.duration(vitals.uptime) : Math.round(vitals.uptime / 3600) + 'h');
-      el('vt-up').textContent = '稼働 ' + up;
-    }).catch(function () {
-      paintBar(bars.cpu, null);
-      paintBar(bars.mem, null);
-      el('vt-cpu-v').textContent = el('vt-mem-v').textContent = '--';
+  // claude.sessions (model, context, cost) was always empty in the probes; read it defensively when it fills up.
+  CK.subscribe('claude', 'sessions', function (v) {
+    if (!v || typeof v !== 'object') return;
+    Object.keys(v).forEach(function (k) {
+      var x = v[k];
+      if (!x || typeof x !== 'object') return;
+      var id = String(x.sessionId || x.session_id || x.id || k), s = sessions[id];
+      if (!s) return;
+      var ctx = x.contextPct !== undefined ? x.contextPct : x.context_pct !== undefined ? x.context_pct : x.context && x.context.pct;
+      ctx = Number(ctx);
+      s.ctx = isFinite(ctx) ? Math.max(0, Math.min(100, ctx > 0 && ctx <= 1 ? ctx * 100 : ctx)) : null;
+      s.model = String(x.model && (x.model.display_name || x.model.id) || x.model || '');
     });
-  }
-  read();
-  CK.poll(2000, read);
+  });
 
-  // PQRST-like beat shape over one cycle (0..1).
-  function beat(p) {
-    function g(c, w, a) { var d = (p - c) / w; return a * Math.exp(-d * d); }
-    return g(0.18, 0.035, 0.12) - g(0.29, 0.012, 0.12) + g(0.31, 0.012, 1) - g(0.335, 0.015, 0.28) + g(0.55, 0.06, 0.22);
+  // Click a planet: its details stay in the label for a few seconds.
+  document.getElementById('cy-canvas').addEventListener('click', function (ev) {
+    var r = ev.currentTarget.getBoundingClientRect(), x = ev.clientX - r.left, y = ev.clientY - r.top, best = null, bd = 1e9;
+    drawn.forEach(function (d) {
+      var dd = Math.hypot(d.x - x, d.y - y);
+      if (dd < Math.max(18, d.r * 2.5) && dd < bd) { bd = dd; best = d.s; }
+    });
+    picked = best;
+    pickedUntil = Date.now() + 8000;
+  });
+
+  function ago(ms) {
+    var s = Math.round(ms / 1000);
+    return s < 60 ? s + 's ago' : s < 3600 ? Math.round(s / 60) + 'm ago' : Math.round(s / 3600) + 'h ago';
   }
+
+  var SUN = { idle: [0.35, 'accent'], thinking: [0.6, 'blue'], streaming: [0.85, 'cyan'], 'tool-use': [1, 'yellow'],
+    permission: [0.55, 'magenta'], error: [0.7, 'red'], complete: [0.9, 'green'] };
 
   CK.loop(function (dt) {
     S.fit();
-    var ctx = S.ctx, w = S.w, h = S.h;
-    if (S.resized) { ctx.fillStyle = CK.c.bg; ctx.fillRect(0, 0, w, h); cursor = 0; prevY = null; S.resized = false; }
-    var cpu = vitals.cpu === null ? 10 : vitals.cpu;
-    bpm += ((55 + cpu * 0.95) - bpm) * (1 - Math.exp(-dt / 1.5));
-    var speed = Math.max(40, w / 3); // px per second, about three seconds per sweep
-    var steps = Math.max(1, Math.round(speed * dt / 1.5));
-    var tone = cpu > 85 ? 'red' : cpu > 60 ? 'yellow' : 'green';
-    for (var s = 0; s < steps; s++) {
-      var dx = speed * dt / steps;
-      phase = (phase + dx / speed * bpm / 60) % 1;
-      var y = h * 0.62 - beat(phase) * h * 0.5;
-      // Erase a band ahead of the cursor, like a hospital monitor.
-      ctx.fillStyle = CK.c.bg;
-      ctx.fillRect(cursor, 0, 14, h);
-      if (prevY !== null) {
-        ctx.strokeStyle = CK.c[tone];
-        ctx.lineWidth = 1.6;
-        ctx.beginPath();
-        ctx.moveTo(cursor - dx, prevY);
-        ctx.lineTo(cursor, y);
-        ctx.stroke();
-      }
-      prevY = y;
-      cursor += dx;
-      if (cursor > w) { cursor = 0; prevY = null; }
+    S.resized = false;
+    var ctx = S.ctx, w = S.w, h = S.h, light = CK.lum('bg') > 0.5, now = Date.now();
+    t += dt;
+
+    ctx.fillStyle = CK.c.bg;
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = CK.c.fg;
+    for (var b = 0; b < bg.length; b++) {
+      var s0 = bg[b];
+      ctx.globalAlpha = 0.12 + 0.3 * (0.5 + 0.5 * Math.sin(t * 1.1 + s0.p));
+      ctx.fillRect(s0.x * w, s0.y * h, s0.s, s0.s);
     }
-    ctx.fillStyle = CK.c[tone];
-    ctx.fillRect(cursor - 1.5, prevY === null ? h / 2 : prevY - 1.5, 3, 3);
+    ctx.globalAlpha = 1;
+
+    // The most recently active sessions, kept in first-seen order so orbits don't swap places.
+    var list = Object.keys(sessions).map(function (k) { return sessions[k]; })
+      .sort(function (a, c) { return c.last - a.last; }).slice(0, MAX_PLANETS)
+      .sort(function (a, c) { return a.first - c.first; });
+    var cx = w / 2, cy = h / 2, unit = Math.min(w, h);
+    var sunInfo = SUN[CK.state()] || SUN.idle, sunR = Math.max(5, unit * 0.07);
+    var rxMax = w * 0.46, ryMax = h * 0.4, n = Math.max(1, list.length);
+    var planets = [];
+    drawn = [];
+
+    list.forEach(function (s, i) {
+      var k = (i + 1) / n, rx = sunR * 2.2 + (rxMax - sunR * 2.2) * k, ry = sunR * 1.4 + (ryMax - sunR * 1.4) * k;
+      var active = now - s.last < ACTIVE_MS, quiet = now - s.last > QUIET_MS;
+      // Inner orbits run faster (Kepler-ish); the active session speeds up.
+      s.phase += dt * 0.35 / Math.sqrt(0.3 + k) * (active ? 2.5 : quiet ? 0.25 : 1);
+      var x = cx + Math.cos(s.phase) * rx, y = cy + Math.sin(s.phase) * ry;
+      var pr = Math.max(2.5, Math.min(unit * 0.06, (2.5 + 2.6 * Math.log(1 + s.calls) / Math.LN10) * unit / 260));
+      s.flare *= Math.exp(-dt * 2.5);
+      s.fail *= Math.exp(-dt * 1.3);
+      if (active) { s.trail.push([x, y]); if (s.trail.length > TRAIL) s.trail.shift(); } else if (s.trail.length) s.trail.shift();
+      planets.push({ s: s, x: x, y: y, r: pr, rx: rx, ry: ry, active: active, quiet: quiet, front: Math.sin(s.phase) > 0 });
+    });
+
+    // Orbits
+    planets.forEach(function (p) {
+      ctx.strokeStyle = CK.rgba(p.active ? p.s.col : 'dim', p.active ? 0.35 : 0.14);
+      ctx.lineWidth = p.active ? 1.2 : 0.8;
+      ctx.beginPath(); ctx.ellipse(cx, cy, p.rx, p.ry, 0, 0, 6.283); ctx.stroke();
+    });
+
+    function drawPlanet(p) {
+      var s = p.s, col = s.fail > 0.05 && Math.sin(t * 28) > 0 ? 'red' : s.col, alpha = p.quiet ? 0.35 : 1;
+      // Comet trail of the busy session
+      if (s.trail.length > 2) {
+        ctx.lineCap = 'round';
+        for (var j = 1; j < s.trail.length; j++) {
+          ctx.strokeStyle = CK.rgba(s.col, 0.5 * j / s.trail.length);
+          ctx.lineWidth = p.r * 1.1 * j / s.trail.length;
+          ctx.beginPath(); ctx.moveTo(s.trail[j - 1][0], s.trail[j - 1][1]); ctx.lineTo(s.trail[j][0], s.trail[j][1]); ctx.stroke();
+        }
+      }
+      if (p.active || s.flare > 0.05) {
+        var gr = p.r * (3 + s.flare * 3), g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, gr);
+        g.addColorStop(0, CK.rgba(col, 0.45 + 0.4 * s.flare));
+        g.addColorStop(1, CK.rgba(col, 0));
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(p.x, p.y, gr, 0, 6.283); ctx.fill();
+      }
+      // Lit side towards the sun
+      var lx = (cx - p.x), ly = (cy - p.y), ll = Math.hypot(lx, ly) || 1;
+      var body = ctx.createRadialGradient(p.x + lx / ll * p.r * 0.4, p.y + ly / ll * p.r * 0.4, p.r * 0.1, p.x, p.y, p.r);
+      body.addColorStop(0, CK.rgba(col, alpha));
+      body.addColorStop(1, CK.mix(col, 'bg', 0.6, alpha));
+      ctx.fillStyle = body;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.283); ctx.fill();
+      // Context ring, when MOLTamp knows it
+      if (s.ctx !== null) {
+        ctx.strokeStyle = CK.rgba(s.ctx > 80 ? 'red' : s.ctx > 60 ? 'yellow' : 'text', 0.8 * alpha);
+        ctx.lineWidth = Math.max(1, p.r * 0.25);
+        ctx.beginPath(); ctx.ellipse(p.x, p.y, p.r * 1.9, p.r * 0.6, -0.35, 0, 6.283 * s.ctx / 100); ctx.stroke();
+      }
+      // Sub-agents become moons
+      for (var m = 0; m < Math.min(3, s.agents); m++) {
+        var ma = t * (1.6 + m * 0.7) + m * 2.1, md = p.r * (2 + m * 0.8);
+        ctx.fillStyle = CK.rgba('fg', 0.8 * alpha);
+        ctx.beginPath(); ctx.arc(p.x + Math.cos(ma) * md, p.y + Math.sin(ma) * md * 0.6, Math.max(1, p.r * 0.28), 0, 6.283); ctx.fill();
+      }
+      // Waiting for your permission
+      if (s.waiting) {
+        var pulse = (t * 1.2) % 1;
+        ctx.strokeStyle = CK.rgba('magenta', 1 - pulse);
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(p.x, p.y, p.r * (1.5 + pulse * 3), 0, 6.283); ctx.stroke();
+      }
+      drawn.push(p);
+    }
+
+    ctx.globalCompositeOperation = light ? 'source-over' : 'lighter';
+    planets.filter(function (p) { return !p.front; }).forEach(drawPlanet);
+    ctx.globalCompositeOperation = 'source-over';
+
+    // The sun: Claude itself, brighter and warmer the busier it is
+    var energy = sunInfo[0], sunCol = sunInfo[1], throb = 1 + 0.08 * Math.sin(t * (2 + energy * 5));
+    var corona = ctx.createRadialGradient(cx, cy, 0, cx, cy, sunR * 3.2 * throb);
+    corona.addColorStop(0, CK.rgba(sunCol, 0.55 * energy + 0.2));
+    corona.addColorStop(1, CK.rgba(sunCol, 0));
+    ctx.fillStyle = corona;
+    ctx.beginPath(); ctx.arc(cx, cy, sunR * 3.2 * throb, 0, 6.283); ctx.fill();
+    ctx.fillStyle = CK.mix(sunCol, 'fg', 0.45);
+    ctx.beginPath(); ctx.arc(cx, cy, sunR * throb, 0, 6.283); ctx.fill();
+
+    ctx.globalCompositeOperation = light ? 'source-over' : 'lighter';
+    planets.filter(function (p) { return p.front; }).forEach(drawPlanet);
+    ctx.globalCompositeOperation = 'source-over';
+
+    if (!planets.length) {
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = CK.font(Math.max(9, Math.min(w, h) / 16));
+      ctx.fillStyle = CK.rgba('dim', 0.8);
+      ctx.fillText('観測中 · waiting for Claude sessions', cx, cy + sunR * 3.4);
+    } else if (w > 220 && h > 90) {
+      ctx.font = CK.font(9);
+      ctx.textBaseline = 'middle';
+      planets.forEach(function (p) {
+        if (p.quiet && p.s !== picked) return;
+        ctx.textAlign = p.x > cx ? 'left' : 'right';
+        ctx.fillStyle = CK.rgba('text', p.active ? 0.95 : 0.6);
+        ctx.fillText((p.s.name || p.s.id.slice(0, 6)) + ' ' + p.s.calls, p.x + (p.x > cx ? 1 : -1) * (p.r + 6), p.y - p.r - 4);
+      });
+    }
     CK.resetCtx(ctx);
-    var b = '脈拍 ' + Math.round(bpm) + ' BPM';
-    if (b !== lastBpm) { lastBpm = b; el('vt-bpm').textContent = b; }
-  }, 60);
+
+    var text;
+    if (picked && pickedUntil > now && sessions[picked.id]) {
+      var ps = picked;
+      text = '軌道 · ' + (ps.name || ps.id.slice(0, 6)) + ' · ' + ps.calls + ' calls' + (ps.agents ? ' · ' + ps.agents + ' agents' : '') +
+        (ps.ctx !== null ? ' · ctx ' + Math.round(ps.ctx) + '%' : '') + ' · ' + ago(now - ps.last);
+    } else {
+      var act = planets.filter(function (p) { return p.active; }).sort(function (a, c) { return c.s.last - a.s.last; })[0];
+      text = !planets.length ? '軌道 · no session yet' : '軌道 · ' + planets.length + ' session' + (planets.length > 1 ? 's' : '') +
+        (act ? ' · ◉ ' + (act.s.name || act.s.id.slice(0, 6)) : ' · all quiet');
+    }
+    if (text !== lastText) { lastText = text; label.textContent = text; }
+  });
 })();
 </script>

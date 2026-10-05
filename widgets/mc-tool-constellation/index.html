@@ -1,42 +1,17 @@
 <!--
-  Cyber Vitals — Cyberpunk pack for MOLTamp
-  CPU and memory as vital signs: segmented gauges, Japanese labels, a heartbeat that follows the load, scanlines.
+  Tool Constellation — Mission Control pack for MOLTamp
+  Every tool Claude uses becomes a star; the calls trace the session's constellation, with shooting stars on each new call. Click to switch session.
   Author: j0j0 · License: MIT
 -->
-<div id="cy-root" class="vt">
-  <div class="vt-head"><span class="vt-title">生体監視</span><span class="vt-sub">VITALS</span><span class="vt-right" id="vt-up">稼働 --</span></div>
-  <div class="vt-row"><span class="vt-lbl">演算<em>CPU</em></span><div class="vt-bar" id="vt-cpu"></div><span class="vt-val" id="vt-cpu-v">--</span></div>
-  <div class="vt-row"><span class="vt-lbl">記憶<em>MEM</em></span><div class="vt-bar" id="vt-mem"></div><span class="vt-val" id="vt-mem-v">--</span></div>
-  <div class="vt-ecg"><canvas id="cy-canvas"></canvas></div>
-  <div class="vt-foot"><span id="vt-load">負荷 LOAD --</span><span id="vt-bpm">脈拍 -- BPM</span></div>
-  <div class="vt-scan"></div>
-</div>
+<div id="cy-root"><canvas id="cy-canvas"></canvas><div id="cy-label"></div></div>
 
 <style>
-  .vt {
-    position: absolute; inset: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; overflow: hidden;
-    background: var(--c-chrome-bg); color: var(--c-chrome-text); container-type: inline-size;
-    font: calc(clamp(9px, 4.2cqw, 13px) * var(--user-text-scale, 1)) / 1.3 'SF Mono', Menlo, 'Hiragino Sans', monospace;
-  }
-  .vt-head { display: flex; align-items: baseline; gap: 6px; letter-spacing: 0.08em; }
-  .vt-title { color: var(--c-chrome-accent); font-weight: bold; }
-  .vt-sub, .vt-lbl em, .vt-foot { color: var(--c-chrome-dim); }
-  .vt-right { margin-left: auto; color: var(--c-chrome-dim); }
-  .vt-row { display: flex; align-items: center; gap: 8px; }
-  .vt-lbl { width: 5.6em; flex: none; }
-  .vt-lbl em { font-style: normal; margin-left: 0.4em; font-size: 0.85em; }
-  .vt-bar { flex: 1; display: flex; gap: 2px; height: 0.95em; }
-  .vt-bar i { flex: 1; background: var(--c-chrome-border); border-radius: 1px; transition: background 0.4s; }
-  .vt-bar i.on { background: var(--t-green); }
-  .vt-bar i.warn { background: var(--t-yellow); }
-  .vt-bar i.crit { background: var(--t-red); }
-  .vt-val { width: 3.6em; text-align: right; flex: none; color: var(--c-chrome-accent); }
-  .vt-ecg { flex: 1; min-height: 36px; border-top: 1px solid var(--c-chrome-border); border-bottom: 1px solid var(--c-chrome-border); }
-  .vt-ecg canvas { display: block; width: 100%; height: 100%; }
-  .vt-foot { display: flex; justify-content: space-between; letter-spacing: 0.05em; }
-  .vt-scan {
-    position: absolute; inset: 0; pointer-events: none; opacity: 0.35;
-    background: repeating-linear-gradient(to bottom, transparent 0 2px, var(--c-chrome-bg) 2px 3px);
+  #cy-root { position: absolute; inset: 0; overflow: hidden; background: var(--c-chrome-bg); container-type: size; }
+  #cy-canvas { display: block; width: 100%; height: 100%; }
+  #cy-label {
+    position: absolute; left: 8px; bottom: 6px; pointer-events: none; letter-spacing: 0.08em;
+    color: var(--c-chrome-dim); text-shadow: 0 0 6px var(--c-chrome-bg);
+    font: calc(clamp(8px, 3.4cqw, 12px) * var(--user-text-scale, 1)) 'SF Mono', Menlo, 'Hiragino Sans', monospace;
   }
 </style>
 
@@ -340,92 +315,204 @@ var CK = (function () {
   };
 })();
 
-// Cyber Vitals: system.getStats as vital signs; the heartbeat rate follows CPU load.
+// Tool Constellation: Claude Code hook events become stars (one per tool) linked by the order of the calls.
 (function () {
   'use strict';
-  var SEGMENTS = 16;
   var S = CK.surface(document.getElementById('cy-canvas'));
-  var el = function (id) { return document.getElementById(id); };
-  var bars = { cpu: el('vt-cpu'), mem: el('vt-mem') };
-  var vitals = { cpu: null, mem: null, load: null, uptime: null };
-  var cursor = 0, phase = 0, prevY = null, bpm = 60, lastBpm = '';
+  var label = document.getElementById('cy-label');
+  var MAX_STARS = 40, MAX_SHOTS = 30, BG_STARS = 140;
+  var sessions = {}, focus = null, pinnedUntil = 0, shots = [], t = 0, lastText = '';
+  var bg = (function () {
+    var r = CK.prng(0.777), list = [];
+    for (var i = 0; i < BG_STARS; i++) list.push({ x: r(), y: r(), s: 0.3 + r() * 1.1, p: r() * 6.283 });
+    return list;
+  })();
 
-  Object.keys(bars).forEach(function (k) {
-    for (var i = 0; i < SEGMENTS; i++) bars[k].appendChild(document.createElement('i'));
-  });
+  function family(tool) {
+    if (/^mcp__/.test(tool)) return 'green';
+    if (/^(Read|Write|Edit|MultiEdit|NotebookEdit|Glob|Grep|LS)$/.test(tool)) return 'cyan';
+    if (/^(Bash|BashOutput|KillShell|Monitor)$/.test(tool)) return 'yellow';
+    if (/^(Agent|Task|SendMessage|Workflow|Skill)$/.test(tool)) return 'magenta';
+    if (/^(WebFetch|WebSearch)$/.test(tool)) return 'blue';
+    return 'accent';
+  }
 
-  function paintBar(bar, pct) {
-    var on = pct === null ? 0 : Math.round(Math.max(0, Math.min(100, pct)) / 100 * SEGMENTS);
-    for (var i = 0; i < SEGMENTS; i++) {
-      var r = (i + 1) / SEGMENTS;
-      bar.children[i].className = i < on ? (r > 0.85 ? 'crit' : r > 0.6 ? 'warn' : 'on') : '';
+  function session(id) {
+    if (!sessions[id]) sessions[id] = { id: id, stars: {}, order: [], links: {}, last: null, lastTs: 0, calls: 0 };
+    return sessions[id];
+  }
+
+  // Same tool, same place in every session (hash), nudged apart from the stars already there.
+  function place(sess, name) {
+    var x = 0.1 + 0.8 * CK.hash(name + '#x'), y = 0.14 + 0.72 * CK.hash(name + '#y');
+    for (var it = 0; it < 40; it++) {
+      var moved = false;
+      for (var i = 0; i < sess.order.length; i++) {
+        var o = sess.stars[sess.order[i]], dx = x - o.x, dy = y - o.y, d = Math.sqrt(dx * dx + dy * dy);
+        if (d < 0.13) {
+          var push = (0.13 - d) / 2 + 0.003, a = d > 1e-4 ? Math.atan2(dy, dx) : CK.hash(name + it) * 6.283;
+          x += Math.cos(a) * push; y += Math.sin(a) * push; moved = true;
+        }
+      }
+      x = Math.max(0.07, Math.min(0.93, x)); y = Math.max(0.1, Math.min(0.88, y));
+      if (!moved) break;
+    }
+    return { x: x, y: y };
+  }
+
+  function ingest(events, history) {
+    for (var i = 0; i < events.length; i++) {
+      var e = events[i];
+      if (!e.tool_name) continue;
+      var hook = String(e.hook_event_name || e._hook || '');
+      var sess = session(String(e._session || e.session_id || 'session'));
+      var name = CK.toolLabel(e.tool_name);
+      if (/^Pre/i.test(hook)) {
+        var st = sess.stars[name];
+        if (!st) {
+          if (sess.order.length >= MAX_STARS) continue;
+          var p = place(sess, name);
+          st = sess.stars[name] = { name: name, x: p.x, y: p.y, n: 0, col: family(e.tool_name), flare: 0, fail: 0 };
+          sess.order.push(name);
+        }
+        st.n++;
+        if (!history) st.flare = 1;
+        if (sess.last && sess.last !== name) {
+          var k = sess.last + '>' + name;
+          var l = sess.links[k] || (sess.links[k] = { a: sess.last, b: name, n: 0 });
+          l.n++;
+          if (!history && shots.length < MAX_SHOTS) shots.push({ sid: sess.id, a: sess.last, b: name, t: 0 });
+        }
+        sess.last = name;
+        sess.lastTs = Math.max(sess.lastTs, Number(e._ts) || Date.now());
+        sess.calls++;
+        // Stay on the shown session while it is active; another one takes over after a minute of quiet
+        // (or never, while a click has pinned the view).
+        var cur = focus && sessions[focus], now = Date.now();
+        if (!cur || (pinnedUntil < now && sess.id !== focus && sess.lastTs - cur.lastTs > 60000)) focus = sess.id;
+      } else if (!history && CK.isFailure(e) && sess.stars[name]) {
+        sess.stars[name].fail = 1;
+      }
     }
   }
+  CK.onEvents(ingest);
 
-  function read() {
-    CK.call('system.getStats').then(function (s) {
-      s = s || {};
-      var cpu = s.cpu || {}, mem = s.memory || {};
-      vitals.cpu = typeof cpu.usagePct === 'number' ? cpu.usagePct : null;
-      vitals.mem = typeof mem.usagePct === 'number' ? mem.usagePct : null;
-      vitals.load = typeof cpu.loadAvg1m === 'number' ? cpu.loadAvg1m : null;
-      vitals.uptime = typeof s.uptime === 'number' ? s.uptime : null;
-      paintBar(bars.cpu, vitals.cpu);
-      paintBar(bars.mem, vitals.mem);
-      el('vt-cpu-v').textContent = vitals.cpu === null ? '--' : Math.round(vitals.cpu) + '%';
-      el('vt-mem-v').textContent = vitals.mem === null ? '--' : Math.round(vitals.mem) + '%';
-      el('vt-load').textContent = '負荷 LOAD ' + (vitals.load === null ? '--' : vitals.load.toFixed(2));
-      var up = vitals.uptime === null ? '--' :
-        (window.moltamp && moltamp.fmt && moltamp.fmt.duration ? moltamp.fmt.duration(vitals.uptime) : Math.round(vitals.uptime / 3600) + 'h');
-      el('vt-up').textContent = '稼働 ' + up;
-    }).catch(function () {
-      paintBar(bars.cpu, null);
-      paintBar(bars.mem, null);
-      el('vt-cpu-v').textContent = el('vt-mem-v').textContent = '--';
-    });
-  }
-  read();
-  CK.poll(2000, read);
-
-  // PQRST-like beat shape over one cycle (0..1).
-  function beat(p) {
-    function g(c, w, a) { var d = (p - c) / w; return a * Math.exp(-d * d); }
-    return g(0.18, 0.035, 0.12) - g(0.29, 0.012, 0.12) + g(0.31, 0.012, 1) - g(0.335, 0.015, 0.28) + g(0.55, 0.06, 0.22);
-  }
+  // Click cycles through the sessions seen so far, most recent first.
+  document.getElementById('cy-canvas').addEventListener('click', function () {
+    var ids = Object.keys(sessions).sort(function (a, b) { return sessions[b].lastTs - sessions[a].lastTs; });
+    if (ids.length < 2) return;
+    focus = ids[(ids.indexOf(focus) + 1) % ids.length];
+    pinnedUntil = Date.now() + 5 * 60000;
+  });
 
   CK.loop(function (dt) {
     S.fit();
-    var ctx = S.ctx, w = S.w, h = S.h;
-    if (S.resized) { ctx.fillStyle = CK.c.bg; ctx.fillRect(0, 0, w, h); cursor = 0; prevY = null; S.resized = false; }
-    var cpu = vitals.cpu === null ? 10 : vitals.cpu;
-    bpm += ((55 + cpu * 0.95) - bpm) * (1 - Math.exp(-dt / 1.5));
-    var speed = Math.max(40, w / 3); // px per second, about three seconds per sweep
-    var steps = Math.max(1, Math.round(speed * dt / 1.5));
-    var tone = cpu > 85 ? 'red' : cpu > 60 ? 'yellow' : 'green';
-    for (var s = 0; s < steps; s++) {
-      var dx = speed * dt / steps;
-      phase = (phase + dx / speed * bpm / 60) % 1;
-      var y = h * 0.62 - beat(phase) * h * 0.5;
-      // Erase a band ahead of the cursor, like a hospital monitor.
-      ctx.fillStyle = CK.c.bg;
-      ctx.fillRect(cursor, 0, 14, h);
-      if (prevY !== null) {
-        ctx.strokeStyle = CK.c[tone];
-        ctx.lineWidth = 1.6;
+    S.resized = false;
+    var ctx = S.ctx, w = S.w, h = S.h, light = CK.lum('bg') > 0.5;
+    t += dt;
+
+    // Deep-space backdrop
+    ctx.fillStyle = CK.c.bg;
+    ctx.fillRect(0, 0, w, h);
+    var neb = ctx.createRadialGradient(w * 0.3, h * 0.35, 0, w * 0.3, h * 0.35, Math.max(w, h) * 0.6);
+    neb.addColorStop(0, CK.rgba('magenta', light ? 0.06 : 0.1));
+    neb.addColorStop(1, CK.rgba('magenta', 0));
+    ctx.fillStyle = neb;
+    ctx.fillRect(0, 0, w, h);
+    var neb2 = ctx.createRadialGradient(w * 0.75, h * 0.7, 0, w * 0.75, h * 0.7, Math.max(w, h) * 0.5);
+    neb2.addColorStop(0, CK.rgba('blue', light ? 0.06 : 0.1));
+    neb2.addColorStop(1, CK.rgba('blue', 0));
+    ctx.fillStyle = neb2;
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = CK.c.fg;
+    for (var b = 0; b < bg.length; b++) {
+      var s0 = bg[b];
+      ctx.globalAlpha = 0.15 + 0.35 * (0.5 + 0.5 * Math.sin(t * 1.3 + s0.p));
+      ctx.fillRect(s0.x * w, s0.y * h, s0.s, s0.s);
+    }
+    ctx.globalAlpha = 1;
+
+    var sess = focus && sessions[focus];
+    if (!sess || !sess.order.length) {
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = CK.font(Math.max(10, Math.min(w, h) / 14));
+      ctx.fillStyle = CK.rgba('dim', 0.8);
+      ctx.fillText('観測中 · waiting for tool calls', w / 2, h / 2);
+      CK.resetCtx(ctx);
+      if (lastText !== 'empty') { lastText = 'empty'; label.textContent = '星座 · no session yet'; }
+      return;
+    }
+    function X(st) { return st.x * w; }
+    function Y(st) { return st.y * h; }
+    var maxN = 1;
+    sess.order.forEach(function (n) { maxN = Math.max(maxN, sess.stars[n].n); });
+
+    // Constellation lines: brighter and thicker the more often that hop happened.
+    Object.keys(sess.links).forEach(function (k) {
+      var l = sess.links[k], a = sess.stars[l.a], c = sess.stars[l.b];
+      if (!a || !c) return;
+      ctx.strokeStyle = CK.rgba('text', Math.min(0.55, 0.1 + l.n * 0.06));
+      ctx.lineWidth = Math.min(2.4, 0.6 + l.n * 0.15);
+      ctx.beginPath(); ctx.moveTo(X(a), Y(a)); ctx.lineTo(X(c), Y(c)); ctx.stroke();
+    });
+
+    // Shooting stars along the hop that just happened
+    ctx.globalCompositeOperation = light ? 'source-over' : 'lighter';
+    for (var i = shots.length - 1; i >= 0; i--) {
+      var sh = shots[i], ss = sessions[sh.sid], A = ss && ss.stars[sh.a], B = ss && ss.stars[sh.b];
+      sh.t += dt * 1.7;
+      if (!A || !B || sh.t >= 1) { shots.splice(i, 1); continue; }
+      if (sh.sid !== sess.id) continue;
+      var px = X(A) + (X(B) - X(A)) * sh.t, py = Y(A) + (Y(B) - Y(A)) * sh.t;
+      var tx = X(A) + (X(B) - X(A)) * Math.max(0, sh.t - 0.2), ty = Y(A) + (Y(B) - Y(A)) * Math.max(0, sh.t - 0.2);
+      ctx.strokeStyle = CK.rgba(B.col, 0.9);
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(tx, ty); ctx.lineTo(px, py); ctx.stroke();
+      ctx.fillStyle = CK.c.fg;
+      ctx.fillRect(px - 1.5, py - 1.5, 3, 3);
+    }
+
+    // Stars
+    var showAll = w > 240, ranked = sess.order.slice().sort(function (a, c) { return sess.stars[c].n - sess.stars[a].n; });
+    for (i = 0; i < sess.order.length; i++) {
+      var st = sess.stars[sess.order[i]], x = X(st), y = Y(st);
+      var size = 2 + 5 * Math.log(1 + st.n) / Math.log(1 + maxN);
+      st.flare *= Math.exp(-dt * 2.2);
+      st.fail *= Math.exp(-dt * 1.2);
+      var col = st.fail > 0.05 && Math.sin(t * 30) > 0 ? 'red' : st.col;
+      var glow = ctx.createRadialGradient(x, y, 0, x, y, size * (3 + st.flare * 4));
+      glow.addColorStop(0, CK.rgba(col, 0.55 + 0.4 * st.flare));
+      glow.addColorStop(1, CK.rgba(col, 0));
+      ctx.fillStyle = glow;
+      ctx.beginPath(); ctx.arc(x, y, size * (3 + st.flare * 4), 0, 6.283); ctx.fill();
+      ctx.fillStyle = CK.mix(col, 'fg', 0.55);
+      ctx.beginPath(); ctx.arc(x, y, size * 0.55, 0, 6.283); ctx.fill();
+      // Four-point sparkle on the busiest stars
+      if (st.n >= maxN * 0.5) {
+        ctx.strokeStyle = CK.rgba(col, 0.5);
+        ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(cursor - dx, prevY);
-        ctx.lineTo(cursor, y);
+        ctx.moveTo(x - size * 2.2, y); ctx.lineTo(x + size * 2.2, y);
+        ctx.moveTo(x, y - size * 2.2); ctx.lineTo(x, y + size * 2.2);
         ctx.stroke();
       }
-      prevY = y;
-      cursor += dx;
-      if (cursor > w) { cursor = 0; prevY = null; }
     }
-    ctx.fillStyle = CK.c[tone];
-    ctx.fillRect(cursor - 1.5, prevY === null ? h / 2 : prevY - 1.5, 3, 3);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.font = CK.font(9);
+    ctx.textBaseline = 'middle';
+    for (i = 0; i < ranked.length; i++) {
+      if (!showAll && i >= 5) break;
+      var s2 = sess.stars[ranked[i]];
+      ctx.textAlign = s2.x > 0.5 ? 'right' : 'left';
+      ctx.fillStyle = CK.rgba('text', 0.85);
+      ctx.fillText(s2.name + ' ' + s2.n, X(s2) + (s2.x > 0.5 ? -10 : 10), Y(s2) - 9);
+    }
     CK.resetCtx(ctx);
-    var b = '脈拍 ' + Math.round(bpm) + ' BPM';
-    if (b !== lastBpm) { lastBpm = b; el('vt-bpm').textContent = b; }
-  }, 60);
+
+    var many = Object.keys(sessions).length;
+    var text = '星座 · ' + sess.id.slice(0, 6) + ' · ' + sess.calls + ' calls' + (many > 1 ? '  ·  ' + many + ' sessions (click)' : '');
+    if (text !== lastText) { lastText = text; label.textContent = text; }
+  });
 })();
 </script>

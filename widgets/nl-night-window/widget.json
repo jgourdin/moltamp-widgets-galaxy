@@ -1,0 +1,15 @@
+{
+  "id": "nl-night-window",
+  "name": "Night Window",
+  "version": "1.0.0",
+  "description": "A rainy window onto a neon city at night, driven by your real weather: rain runs down the glass, snow drifts, fog rolls in, storms flash, clear skies show the moon. Click the neon sign to set your city.",
+  "author": "j0j0",
+  "category": "Night Lounge",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "ipc": [
+      "system.weather"
+    ]
+  }
+}

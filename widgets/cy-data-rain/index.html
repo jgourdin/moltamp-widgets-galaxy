@@ -167,6 +167,59 @@ var CK = (function () {
     return tel.level;
   }
 
+  // ------------------------------------------------------------------ Claude Code hook events
+  // event.events is a ring buffer of the last ~200 hook payloads from every session; callers only
+  // want what is new, so entries are de-duplicated by timestamp, hook, tool and session.
+  var evSeen = {}, evQueue = [], evListeners = [], evStarted = false;
+  function eventKey(e) { return [e._ts, e._hook || e.hook_event_name, e.tool_name, e._session || e.session_id].join('|'); }
+  function onEvents(cb) {
+    evListeners.push(cb);
+    if (evStarted) return;
+    evStarted = true;
+    var first = true;
+    subscribe('event', 'events', function (v) {
+      var list = Array.isArray(v) ? v : v && typeof v === 'object' ? Object.keys(v).map(function (k) { return v[k]; }) : [];
+      var fresh = [];
+      for (var i = 0; i < list.length; i++) {
+        var e = list[i];
+        if (!e || typeof e !== 'object') continue;
+        var k = eventKey(e);
+        if (evSeen[k]) continue;
+        evSeen[k] = true;
+        evQueue.push(k);
+        fresh.push(e);
+      }
+      while (evQueue.length > 800) delete evSeen[evQueue.shift()];
+      var history = first;
+      first = false;
+      if (fresh.length) for (var j = 0; j < evListeners.length; j++) {
+        try { evListeners[j](fresh, history); } catch (err) { /* keep other listeners alive */ }
+      }
+    });
+  }
+
+  // A failure is read from the tool's response or the hook name, never from its input
+  // (a command that merely contains the word "error" is not a failure).
+  function isFailure(e) {
+    var hook = String(e.hook_event_name || e._hook || '');
+    if (/fail|error/i.test(hook)) return true;
+    var r = e.tool_response;
+    if (!r || typeof r !== 'object') return false;
+    if (r.is_error === true || r.isError === true || r.success === false || r.interrupted === true) return true;
+    var code = r.exitCode !== undefined ? r.exitCode : r.exit_code !== undefined ? r.exit_code : r.code;
+    if (typeof code === 'number' && code !== 0) return true;
+    return typeof r.error === 'string' && r.error.length > 0;
+  }
+
+  function toolLabel(name) {
+    name = String(name || '?');
+    if (name.indexOf('mcp__') !== 0) return name;
+    // mcp__plugin_chrome-devtools-mcp_chrome-devtools__take_screenshot -> chrome-devtools
+    var server = name.split('__')[1] || 'mcp';
+    server = server.replace(/^plugin_/, '').replace(/^claude_ai_/, '').split('_').pop();
+    return 'mcp:' + server;
+  }
+
   // ------------------------------------------------------------------ canvas + loop
   // Paused while off screen (hidden tab) or while the whole page is hidden; both must clear to resume.
   var onScreen = true, pageVisible = !document.hidden, watching = false;
@@ -255,6 +308,7 @@ var CK = (function () {
     poll: poll, subscribe: subscribe, call: call, font: font,
     state: currentState, stateInfo: state, onState: function (cb) { stateListeners.push(cb); },
     telemetry: telemetry, telemetryLevel: telemetryLevel,
+    onEvents: onEvents, isFailure: isFailure, toolLabel: toolLabel,
     surface: surface, loop: loop, resetCtx: resetCtx, isVisible: visibleNow,
     hash: hash, prng: prng, fmtBytes: fmtBytes,
     meta: (hasSdk && moltamp.meta) || { context: 'panel' }

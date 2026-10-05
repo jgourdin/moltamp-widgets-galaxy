@@ -1,42 +1,17 @@
 <!--
-  Cyber Vitals — Cyberpunk pack for MOLTamp
-  CPU and memory as vital signs: segmented gauges, Japanese labels, a heartbeat that follows the load, scanlines.
+  Flight Recorder — Mission Control pack for MOLTamp
+  The black box of the last hour: a timeline of what Claude was doing (thinking, running tools, waiting for you, failing) with your prompts, errors and commits as markers, plus where the time went. Click to zoom between 15 minutes, 1 hour and 4 hours.
   Author: j0j0 · License: MIT
 -->
-<div id="cy-root" class="vt">
-  <div class="vt-head"><span class="vt-title">生体監視</span><span class="vt-sub">VITALS</span><span class="vt-right" id="vt-up">稼働 --</span></div>
-  <div class="vt-row"><span class="vt-lbl">演算<em>CPU</em></span><div class="vt-bar" id="vt-cpu"></div><span class="vt-val" id="vt-cpu-v">--</span></div>
-  <div class="vt-row"><span class="vt-lbl">記憶<em>MEM</em></span><div class="vt-bar" id="vt-mem"></div><span class="vt-val" id="vt-mem-v">--</span></div>
-  <div class="vt-ecg"><canvas id="cy-canvas"></canvas></div>
-  <div class="vt-foot"><span id="vt-load">負荷 LOAD --</span><span id="vt-bpm">脈拍 -- BPM</span></div>
-  <div class="vt-scan"></div>
-</div>
+<div id="cy-root"><canvas id="cy-canvas"></canvas><div id="cy-label"></div></div>
 
 <style>
-  .vt {
-    position: absolute; inset: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; overflow: hidden;
-    background: var(--c-chrome-bg); color: var(--c-chrome-text); container-type: inline-size;
-    font: calc(clamp(9px, 4.2cqw, 13px) * var(--user-text-scale, 1)) / 1.3 'SF Mono', Menlo, 'Hiragino Sans', monospace;
-  }
-  .vt-head { display: flex; align-items: baseline; gap: 6px; letter-spacing: 0.08em; }
-  .vt-title { color: var(--c-chrome-accent); font-weight: bold; }
-  .vt-sub, .vt-lbl em, .vt-foot { color: var(--c-chrome-dim); }
-  .vt-right { margin-left: auto; color: var(--c-chrome-dim); }
-  .vt-row { display: flex; align-items: center; gap: 8px; }
-  .vt-lbl { width: 5.6em; flex: none; }
-  .vt-lbl em { font-style: normal; margin-left: 0.4em; font-size: 0.85em; }
-  .vt-bar { flex: 1; display: flex; gap: 2px; height: 0.95em; }
-  .vt-bar i { flex: 1; background: var(--c-chrome-border); border-radius: 1px; transition: background 0.4s; }
-  .vt-bar i.on { background: var(--t-green); }
-  .vt-bar i.warn { background: var(--t-yellow); }
-  .vt-bar i.crit { background: var(--t-red); }
-  .vt-val { width: 3.6em; text-align: right; flex: none; color: var(--c-chrome-accent); }
-  .vt-ecg { flex: 1; min-height: 36px; border-top: 1px solid var(--c-chrome-border); border-bottom: 1px solid var(--c-chrome-border); }
-  .vt-ecg canvas { display: block; width: 100%; height: 100%; }
-  .vt-foot { display: flex; justify-content: space-between; letter-spacing: 0.05em; }
-  .vt-scan {
-    position: absolute; inset: 0; pointer-events: none; opacity: 0.35;
-    background: repeating-linear-gradient(to bottom, transparent 0 2px, var(--c-chrome-bg) 2px 3px);
+  #cy-root { position: absolute; inset: 0; overflow: hidden; background: var(--c-chrome-bg); container-type: size; }
+  #cy-canvas { display: block; width: 100%; height: 100%; }
+  #cy-label {
+    position: absolute; left: 8px; bottom: 6px; pointer-events: none; letter-spacing: 0.08em;
+    color: var(--c-chrome-dim); text-shadow: 0 0 6px var(--c-chrome-bg);
+    font: calc(clamp(8px, 3.4cqw, 12px) * var(--user-text-scale, 1)) 'SF Mono', Menlo, 'Hiragino Sans', monospace;
   }
 </style>
 
@@ -340,92 +315,235 @@ var CK = (function () {
   };
 })();
 
-// Cyber Vitals: system.getStats as vital signs; the heartbeat rate follows CPU load.
+// Flight Recorder: Claude's states over time, rebuilt from hook events and continued live from the shell state.
 (function () {
   'use strict';
-  var SEGMENTS = 16;
   var S = CK.surface(document.getElementById('cy-canvas'));
-  var el = function (id) { return document.getElementById(id); };
-  var bars = { cpu: el('vt-cpu'), mem: el('vt-mem') };
-  var vitals = { cpu: null, mem: null, load: null, uptime: null };
-  var cursor = 0, phase = 0, prevY = null, bpm = 60, lastBpm = '';
+  var label = document.getElementById('cy-label');
+  var WINDOWS = [15, 60, 240], wi = 1, STALE_MS = 10 * 60e3;
+  var PRIORITY = { idle: 0, complete: 1, thinking: 2, streaming: 3, 'tool-use': 4, permission: 5, error: 6 };
+  var COLOR = { idle: null, complete: 'green', thinking: 'blue', streaming: 'cyan', 'tool-use': 'yellow', permission: 'magenta', error: 'red' };
+  var GROUPS = [['tools', ['tool-use'], 'yellow'], ['thinking', ['thinking', 'streaming'], 'cyan'], ['waiting on you', ['permission'], 'magenta'], ['idle', ['idle', 'complete'], 'dim']];
+  var marks = {}, hookSegs = [], prompts = [], errors = [], commits = [], live = [], liveStart = 0, dirty = true, rebuiltAt = 0, lastText = '';
 
-  Object.keys(bars).forEach(function (k) {
-    for (var i = 0; i < SEGMENTS; i++) bars[k].appendChild(document.createElement('i'));
+  // ---- hook events -> per-session state marks
+  function stateOf(e) {
+    var hook = String(e.hook_event_name || e._hook || '');
+    if (/^UserPromptSubmit$/i.test(hook)) return 'thinking';
+    if (/^Pre/i.test(hook)) return 'tool-use';
+    if (/^Post/i.test(hook)) return 'thinking';
+    if (/^Notification$/i.test(hook)) return /permission/i.test(String(e.message || '')) ? 'permission' : 'idle';
+    if (/^(Stop|SessionEnd)$/i.test(hook)) return 'complete';
+    return null;
+  }
+
+  CK.onEvents(function (events) {
+    for (var i = 0; i < events.length; i++) {
+      var e = events[i], ts = Number(e._ts) || Date.now(), id = String(e._session || e.session_id || 'session');
+      var st = stateOf(e);
+      if (/^UserPromptSubmit$/i.test(String(e.hook_event_name || e._hook || ''))) prompts.push(ts);
+      if (CK.isFailure(e)) errors.push({ t: ts, tool: CK.toolLabel(e.tool_name) });
+      if (!st) continue;
+      var list = marks[id] = marks[id] || [];
+      list.push([ts, st]);
+      if (list.length > 800) list.splice(0, list.length - 800);
+    }
+    if (prompts.length > 500) prompts.splice(0, prompts.length - 500);
+    if (errors.length > 500) errors.splice(0, errors.length - 500);
+    dirty = true;
   });
 
-  function paintBar(bar, pct) {
-    var on = pct === null ? 0 : Math.round(Math.max(0, Math.min(100, pct)) / 100 * SEGMENTS);
-    for (var i = 0; i < SEGMENTS; i++) {
-      var r = (i + 1) / SEGMENTS;
-      bar.children[i].className = i < on ? (r > 0.85 ? 'crit' : r > 0.6 ? 'warn' : 'on') : '';
-    }
-  }
-
-  function read() {
-    CK.call('system.getStats').then(function (s) {
-      s = s || {};
-      var cpu = s.cpu || {}, mem = s.memory || {};
-      vitals.cpu = typeof cpu.usagePct === 'number' ? cpu.usagePct : null;
-      vitals.mem = typeof mem.usagePct === 'number' ? mem.usagePct : null;
-      vitals.load = typeof cpu.loadAvg1m === 'number' ? cpu.loadAvg1m : null;
-      vitals.uptime = typeof s.uptime === 'number' ? s.uptime : null;
-      paintBar(bars.cpu, vitals.cpu);
-      paintBar(bars.mem, vitals.mem);
-      el('vt-cpu-v').textContent = vitals.cpu === null ? '--' : Math.round(vitals.cpu) + '%';
-      el('vt-mem-v').textContent = vitals.mem === null ? '--' : Math.round(vitals.mem) + '%';
-      el('vt-load').textContent = '負荷 LOAD ' + (vitals.load === null ? '--' : vitals.load.toFixed(2));
-      var up = vitals.uptime === null ? '--' :
-        (window.moltamp && moltamp.fmt && moltamp.fmt.duration ? moltamp.fmt.duration(vitals.uptime) : Math.round(vitals.uptime / 3600) + 'h');
-      el('vt-up').textContent = '稼働 ' + up;
-    }).catch(function () {
-      paintBar(bars.cpu, null);
-      paintBar(bars.mem, null);
-      el('vt-cpu-v').textContent = el('vt-mem-v').textContent = '--';
-    });
-  }
-  read();
-  CK.poll(2000, read);
-
-  // PQRST-like beat shape over one cycle (0..1).
-  function beat(p) {
-    function g(c, w, a) { var d = (p - c) / w; return a * Math.exp(-d * d); }
-    return g(0.18, 0.035, 0.12) - g(0.29, 0.012, 0.12) + g(0.31, 0.012, 1) - g(0.335, 0.015, 0.28) + g(0.55, 0.06, 0.22);
-  }
-
-  CK.loop(function (dt) {
-    S.fit();
-    var ctx = S.ctx, w = S.w, h = S.h;
-    if (S.resized) { ctx.fillStyle = CK.c.bg; ctx.fillRect(0, 0, w, h); cursor = 0; prevY = null; S.resized = false; }
-    var cpu = vitals.cpu === null ? 10 : vitals.cpu;
-    bpm += ((55 + cpu * 0.95) - bpm) * (1 - Math.exp(-dt / 1.5));
-    var speed = Math.max(40, w / 3); // px per second, about three seconds per sweep
-    var steps = Math.max(1, Math.round(speed * dt / 1.5));
-    var tone = cpu > 85 ? 'red' : cpu > 60 ? 'yellow' : 'green';
-    for (var s = 0; s < steps; s++) {
-      var dx = speed * dt / steps;
-      phase = (phase + dx / speed * bpm / 60) % 1;
-      var y = h * 0.62 - beat(phase) * h * 0.5;
-      // Erase a band ahead of the cursor, like a hospital monitor.
-      ctx.fillStyle = CK.c.bg;
-      ctx.fillRect(cursor, 0, 14, h);
-      if (prevY !== null) {
-        ctx.strokeStyle = CK.c[tone];
-        ctx.lineWidth = 1.6;
-        ctx.beginPath();
-        ctx.moveTo(cursor - dx, prevY);
-        ctx.lineTo(cursor, y);
-        ctx.stroke();
+  // Sessions are merged by priority: a tool running anywhere beats thinking elsewhere.
+  function rebuild() {
+    var all = [];
+    Object.keys(marks).forEach(function (id) {
+      var m = marks[id].sort(function (a, b) { return a[0] - b[0]; });
+      for (var i = 0; i < m.length; i++) {
+        all.push([m[i][0], id, m[i][1]]);
+        // A session that went silent without a Stop is idle after a while (crash, closed terminal).
+        var next = m[i + 1];
+        if (m[i][1] !== 'idle' && m[i][1] !== 'permission' && (!next || next[0] - m[i][0] > STALE_MS) && m[i][0] + STALE_MS < Date.now()) {
+          all.push([m[i][0] + STALE_MS, id, 'idle']);
+        }
       }
-      prevY = y;
-      cursor += dx;
-      if (cursor > w) { cursor = 0; prevY = null; }
+    });
+    all.sort(function (a, b) { return a[0] - b[0]; });
+    var cur = {}, segs = [], prev = null;
+    for (var i = 0; i < all.length; i++) {
+      cur[all[i][1]] = all[i][2];
+      var best = 'idle';
+      for (var k in cur) if (PRIORITY[cur[k]] > PRIORITY[best]) best = cur[k];
+      if (best !== prev) { segs.push([all[i][0], best]); prev = best; }
     }
-    ctx.fillStyle = CK.c[tone];
-    ctx.fillRect(cursor - 1.5, prevY === null ? h / 2 : prevY - 1.5, 3, 3);
+    hookSegs = segs;
+    dirty = false;
+    rebuiltAt = Date.now();
+  }
+
+  // ---- live shell state (the only source that knows about streaming)
+  CK.onState(function (st) {
+    var now = Date.now();
+    if (!liveStart) liveStart = now;
+    if (!live.length || live[live.length - 1][1] !== st) live.push([now, st]);
+    // A shell error right after a failed tool call is the same incident.
+    if (st === 'error' && !errors.some(function (er) { return Math.abs(er.t - now) < 3000; })) errors.push({ t: now, tool: '' });
+    while (live.length > 4000) live.shift();
+  });
+
+  CK.subscribe('git', 'status', function (s) {
+    if (!s || !Array.isArray(s.recentCommits)) return;
+    commits = s.recentCommits.map(function (c) { return { t: Date.parse(c && c.timestamp), hash: String(c && c.hash || '').slice(0, 7), msg: String(c && c.message || '') }; })
+      .filter(function (c) { return isFinite(c.t); });
+  });
+
+  document.getElementById('cy-canvas').addEventListener('click', function () { wi = (wi + 1) % WINDOWS.length; });
+
+  // Timeline as [start, state] pairs covering [from, now]: hook history first, live state once it is known.
+  function timeline(from, now) {
+    var out = [], src = hookSegs;
+    for (var i = 0; i < src.length; i++) {
+      if (liveStart && src[i][0] >= liveStart) break;
+      out.push(src[i]);
+    }
+    for (i = 0; i < live.length; i++) out.push(live[i]);
+    var start = out.length ? out[0][0] : now;
+    var cut = [];
+    for (i = 0; i < out.length; i++) {
+      var a = out[i][0], b = i + 1 < out.length ? out[i + 1][0] : now;
+      if (b <= from) continue;
+      a = Math.max(a, from);
+      b = Math.min(b, now);
+      // "complete" is a moment: three seconds of green, then idle.
+      if (out[i][1] === 'complete' && b - a > 3000) { cut.push([a, a + 3000, 'complete']); cut.push([a + 3000, b, 'idle']); }
+      else cut.push([a, b, out[i][1]]);
+    }
+    return { segs: cut, known: Math.max(from, start) };
+  }
+
+  function fmtDur(ms) {
+    var m = Math.round(ms / 60000);
+    return m < 60 ? m + 'm' : Math.floor(m / 60) + 'h' + (m % 60 ? ('0' + m % 60).slice(-2) : '');
+  }
+
+  CK.loop(function () {
+    S.fit();
+    S.resized = false;
+    if (dirty || Date.now() - rebuiltAt > 30000) rebuild();
+    var ctx = S.ctx, w = S.w, h = S.h, now = Date.now(), win = WINDOWS[wi] * 60e3, from = now - win;
+    var tl = timeline(from, now), pad = 8, x0 = pad, x1 = w - pad, span = x1 - x0;
+    // Short slots (vibes bar) keep the band and the axis; the legend moves to the label line.
+    var compact = h < 150;
+    var bandY = compact ? h * 0.28 : h * 0.2, bandH = compact ? h * 0.36 : Math.max(14, h * 0.36);
+    function X(ts) { return x0 + (ts - from) / win * span; }
+
+    ctx.fillStyle = CK.c.bg;
+    ctx.fillRect(0, 0, w, h);
+
+    // No recording yet: hatched
+    var kx = X(tl.known);
+    if (kx > x0 + 1) {
+      ctx.save();
+      ctx.beginPath(); ctx.rect(x0, bandY, kx - x0, bandH); ctx.clip();
+      ctx.strokeStyle = CK.rgba('dim', 0.18);
+      for (var hx = x0 - bandH; hx < kx; hx += 6) { ctx.beginPath(); ctx.moveTo(hx, bandY + bandH); ctx.lineTo(hx + bandH, bandY); ctx.stroke(); }
+      ctx.restore();
+      if (kx - x0 > 60 && !compact) {
+        ctx.fillStyle = CK.rgba('dim', 0.7);
+        ctx.font = CK.font(8);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('no data', (x0 + kx) / 2, bandY + bandH / 2);
+      }
+    }
+
+    // State band + time per group
+    var spent = {};
+    ctx.fillStyle = CK.rgba('dim', 0.1);
+    ctx.fillRect(kx, bandY, x1 - kx, bandH);
+    tl.segs.forEach(function (sg) {
+      spent[sg[2]] = (spent[sg[2]] || 0) + (sg[1] - sg[0]);
+      var col = COLOR[sg[2]];
+      if (!col) return;
+      var a = X(sg[0]), b = Math.max(a + 1, X(sg[1]));
+      ctx.fillStyle = CK.rgba(col, sg[2] === 'complete' ? 0.9 : 0.75);
+      ctx.fillRect(a, bandY, b - a, bandH);
+    });
+    ctx.strokeStyle = CK.rgba('dim', 0.35);
+    ctx.strokeRect(x0 + 0.5, bandY + 0.5, span - 1, bandH - 1);
+
+    // Markers: your prompts (ticks on top), commits (diamonds above), errors (triangles below)
+    prompts.forEach(function (ts) {
+      if (ts < from) return;
+      ctx.fillStyle = CK.rgba('fg', 0.8);
+      ctx.fillRect(X(ts) - 0.5, bandY - 4, 1.2, 4);
+    });
+    var lastLabel = -1e9;
+    commits.forEach(function (c) {
+      if (c.t < from || c.t > now + 60e3) return;
+      var x = Math.min(x1, X(c.t)), y = bandY - 9, r = 3.5;
+      ctx.fillStyle = CK.c.green;
+      ctx.beginPath(); ctx.moveTo(x, y - r); ctx.lineTo(x + r, y); ctx.lineTo(x, y + r); ctx.lineTo(x - r, y); ctx.closePath(); ctx.fill();
+      if (!compact && x - lastLabel > 52 && y > 14) {
+        lastLabel = x;
+        ctx.font = CK.font(8);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(c.hash, Math.min(x1 - 20, Math.max(x0 + 20, x)), y - r - 1);
+      }
+    });
+    errors.forEach(function (er) {
+      if (er.t < from) return;
+      var x = X(er.t), y = bandY + bandH + 3;
+      ctx.fillStyle = CK.c.red;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 3.5, y + 6); ctx.lineTo(x - 3.5, y + 6); ctx.closePath(); ctx.fill();
+    });
+
+    // Time axis
+    var axisY = bandY + bandH + 12;
+    ctx.font = CK.font(8);
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = CK.rgba('dim', 0.75);
+    var ticks = WINDOWS[wi] <= 15 ? 5 : WINDOWS[wi] <= 60 ? 15 : 60;
+    for (var m = 0; m <= WINDOWS[wi]; m += ticks) {
+      var tx = x1 - m / WINDOWS[wi] * span;
+      ctx.fillRect(tx, bandY + bandH, 1, 2);
+      if (!compact || m === 0 || m === WINDOWS[wi]) {
+        ctx.textAlign = m === 0 ? 'right' : m === WINDOWS[wi] ? 'left' : 'center';
+        ctx.fillText(m === 0 ? 'now' : '-' + fmtDur(m * 60e3), tx, axisY);
+      }
+    }
+
+    // Where the time went
+    var total = 0;
+    GROUPS.forEach(function (g) { g.ms = 0; g[1].forEach(function (s) { g.ms += spent[s] || 0; }); total += g.ms; });
+    if (!compact && total > 0) {
+      var ly = axisY + 16, lx = x0;
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      ctx.font = CK.font(9);
+      GROUPS.forEach(function (g) {
+        var txt = g[0] + ' ' + Math.round(g.ms / total * 100) + '%', tw = ctx.measureText(txt).width;
+        if (lx + tw + 14 > x1) { lx = x0; ly += 14; }
+        if (ly > h - 24) return;
+        ctx.fillStyle = g[2] === 'dim' ? CK.rgba('dim', 0.4) : CK.c[g[2]];
+        ctx.fillRect(lx, ly - 4, 8, 8);
+        ctx.fillStyle = CK.c.text;
+        ctx.fillText(txt, lx + 11, ly);
+        lx += tw + 22;
+      });
+      var nErr = errors.filter(function (er) { return er.t >= from; }).length;
+      var nCom = commits.filter(function (c) { return c.t >= from; }).length;
+      var extra = (nErr ? nErr + ' error' + (nErr > 1 ? 's' : '') : '') + (nErr && nCom ? ' · ' : '') + (nCom ? nCom + ' commit' + (nCom > 1 ? 's' : '') : '');
+      if (extra && ly + 14 < h - 24) {
+        ctx.fillStyle = CK.rgba('dim', 0.9);
+        ctx.fillText(extra, x0, ly + 14);
+      }
+    }
     CK.resetCtx(ctx);
-    var b = '脈拍 ' + Math.round(bpm) + ' BPM';
-    if (b !== lastBpm) { lastBpm = b; el('vt-bpm').textContent = b; }
-  }, 60);
+
+    var top = GROUPS.filter(function (g) { return g[0] !== 'idle' && total && Math.round(g.ms / total * 100) > 0; }).map(function (g) { return g[0] + ' ' + Math.round(g.ms / total * 100) + '%'; });
+    var text = '記録 · ' + fmtDur(win) + (total ? (top.length ? ' · ' + top.join(' · ') : ' · idle') : ' · recording…');
+    if (text !== lastText) { lastText = text; label.textContent = text; }
+  }, 20);
 })();
 </script>

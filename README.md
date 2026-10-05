@@ -6,14 +6,14 @@
 
 **A universe of GPU-powered widgets and visualizers for [MOLTamp](https://moltamp.com), orbiting around Claude.**
 
-🪐 28 widgets · 🌠 8 visualizers · 🌆 2 constellations · 🛰️ zero network
+🪐 38 widgets · 🌠 9 visualizers · 🌌 4 constellations · 🎨 1 skin · 🛰️ zero network
 
 ![MOLTamp](https://img.shields.io/badge/MOLTamp-3.2.2-ff71ce?style=flat-square)
 ![WebGL2](https://img.shields.io/badge/WebGL-2.0-01cdfe?style=flat-square)
-![Constellations](https://img.shields.io/badge/constellations-2-b967ff?style=flat-square)
+![Constellations](https://img.shields.io/badge/constellations-4-b967ff?style=flat-square)
 ![License](https://img.shields.io/badge/license-CC%20BY--NC--SA%203.0%20%2B%20MIT-fffb96?style=flat-square)
 
-[🚀 Launch](#-launch-sequence) · [🛰️ Mission control](#%EF%B8%8F-mission-control) · [🌌 Constellations](#-constellations) · [🌠 Visualizers](#-visualizers) · [🔭 Observatory](#-observatory) · [⭐ Star chart](#-star-chart)
+[🚀 Launch](#-launch-sequence) · [📡 Ground control](#-ground-control) · [🌌 Constellations](#-constellations) · [🌠 Visualizers](#-visualizers) · [🎨 Skin](#-skin) · [🔭 Observatory](#-observatory) · [⭐ Star chart](#-star-chart)
 
 </div>
 
@@ -30,13 +30,14 @@ Then **restart MOLTamp** and pick your planets:
 
 | To add… | Go to… |
 |---|---|
-| 🪐 a widget | **Settings › Tabs**, category **Shaders** or **Cyberpunk**, then drag it into a tab |
+| 🪐 a widget | **Settings › Tabs**, category **Shaders**, **Cyberpunk**, **Mission Control** or **Night Lounge**, then drag it into a tab |
 | 🌠 a visualizer | the ⚙️ gear of the **Visualizer** widget, then pick the preset |
+| 🎨 the skin | **Skins**, then pick **Galaxy** |
 
 > [!TIP]
 > Widgets fill their whole slot. They shine brightest in the **Vibes bar**, at the very top of the window.
 
-## 🛰️ Mission control
+## 📡 Ground control
 
 The whole galaxy reacts to Claude. MOLTamp doesn't give widgets any audio, but they **feel Claude**: speed and intensity follow its state, and terminal throughput adds extra thrust.
 
@@ -81,18 +82,50 @@ Eight original widgets plugged straight into MOLTamp's live data: Claude's state
 > [!NOTE]
 > *Context Core* reads Claude's status line, so it only shows up for Claude sessions. *Optic Camo* can't distort the terminal itself (widgets are sandboxed): the glitch plays inside its own slot. Click it to preview.
 
+### 🛰️ Mission Control
+
+Seven original widgets for the long hours next to Claude: watch what it does, look back at where the time went, kill time while it works, and keep an eye on the fuel and the fare.
+
+<table>
+<tr><td align="center" valign="top" width="33%"><img src="docs/mission/mc-tool-constellation.jpg" width="260" alt="Tool Constellation"><br><b>Tool Constellation</b><br><sub>Every tool Claude calls becomes a star, linked in the order of the calls. Click to switch session.<br>feeds on <i>hook events</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/mission/mc-session-orbits.jpg" width="260" alt="Session Orbits"><br><b>Session Orbits</b><br><sub>Each Claude Code session is a planet around Claude: the busy one leaves a comet trail, sub-agents become moons.<br>feeds on <i>hook events</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/mission/mc-hook-seismograph.jpg" width="260" alt="Hook Seismograph"><br><b>Hook Seismograph</b><br><sub>Every tool call shakes the needle in its colour; a failed call sets off a red earthquake. Click to change the window.<br>feeds on <i>hook events</i></sub></td></tr>
+<tr><td align="center" valign="top" width="33%"><img src="docs/mission/mc-flight-recorder.jpg" width="260" alt="Flight Recorder"><br><b>Flight Recorder</b><br><sub>The black box of the last hour: what Claude did, your prompts, errors, commits, and where the time went.<br>feeds on <i>hook events, Claude state, Git</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/mission/mc-waiting-arcade.jpg" width="260" alt="Waiting Arcade"><br><b>Waiting Arcade</b><br><sub>A pocket space shooter for while Claude works; it pauses and calls you back when Claude is done or needs you.<br>feeds on <i>Claude state + keyboard</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/mission/mc-rate-fuel.jpg" width="260" alt="Rate Limit Fuel"><br><b>Rate Limit Fuel</b><br><sub>Your 5-hour and 7-day limits as fuel gauges, with refuel countdown and burn-rate ETA.<br>feeds on <i>rate limits</i></sub></td></tr>
+<tr><td align="center" valign="top" width="33%"><img src="docs/mission/mc-taxi-meter.jpg" width="260" alt="Taxi Meter"><br><b>Taxi Meter</b><br><sub>The session fare rolling on mechanical drums, with tokens, API time, hourly rate and a lifetime odometer.<br>feeds on <i>session cost</i></sub></td></tr>
+</table>
+
+> [!NOTE]
+> *Tool Constellation*, *Session Orbits*, *Hook Seismograph* and *Flight Recorder* light up from Claude Code hook events, so they show the past few minutes as soon as they load. *Waiting Arcade* plays with the arrows (or A/D, Q/D), fires with space and pauses with P. *Rate Limit Fuel* and the *Taxi Meter* fare, like *Context Core*, read Claude's status line: they stay offline until MOLTamp's status line is active (the taxi's lifetime odometer works without it).
+
+### 🌃 Night Lounge
+
+Three original widgets for the quiet hours: the weather outside, the music, and a little companion that grows with your work.
+
+<table>
+<tr><td align="center" valign="top" width="33%"><img src="docs/lounge/nl-night-window.jpg" width="260" alt="Night Window"><br><b>Night Window</b><br><sub>A rainy window onto a neon city at night: rain on the glass, snow, fog, lightning or the moon, from your real weather.<br>feeds on <i>local weather</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/lounge/nl-cassette-deck.jpg" width="260" alt="Cassette Deck"><br><b>Cassette Deck</b><br><sub>Whatever your Mac is playing, on a spinning cassette with VU meters and working previous / play-pause / next buttons.<br>feeds on <i>now playing</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/lounge/nl-token-pet.jpg" width="260" alt="Token Pet"><br><b>Token Pet</b><br><sub>A pixel creature that munches tokens while Claude writes, panics on errors, naps when it's quiet and evolves with every task and commit.<br>feeds on <i>Claude state, hook events, Git</i></sub></td></tr>
+</table>
+
+> [!NOTE]
+> Click *Night Window*'s neon sign to type your city. *Cassette Deck* shows what macOS reports as now playing; album art only shows up when MOLTamp hands it over inline (widgets can't load remote images). *Token Pet* keeps its level in the widget settings, so it survives restarts.
+
 ## 🌠 Visualizers
 
 The sound of the galaxy. Pick them from the ⚙️ gear of the Visualizer widget: they react to everything coming out of your speakers (Spotify, YouTube, anything).
 
 <table>
-<tr><td align="center" valign="top" width="33%"><img src="docs/visualizers/st-spectralizer.jpg" width="260" alt="Spectralizer"><br><b>Spectralizer</b> <sub>· GPU</sub><br><sub>The smoke, sculpted by your music's real spectrum.<br>by <i>chronos</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/visualizers/st-deepseek-r1.jpg" width="260" alt="Fractal Kaleidoscope"><br><b>Fractal Kaleidoscope</b> <sub>· GPU</sub><br><sub>The kaleidoscope, driven by bass, mids and highs.<br>by <i>Patan77</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/visualizers/st-skurr.jpg" width="260" alt="Psyche Skull"><br><b>Psyche Skull</b> <sub>· GPU</sub><br><sub>The skull, warped by the highs and lows.<br>by <i>im_paul_hi</i></sub></td></tr>
-<tr><td align="center" valign="top" width="33%"><img src="docs/visualizers/st-sound-candy.jpg" width="260" alt="Sound Candy"><br><b>Sound Candy</b> <sub>· GPU</sub><br><sub>Neon rings pulsing with the volume.<br>by <i>Pink</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/visualizers/st-fractal-land.jpg" width="260" alt="Fractal Land"><br><b>Fractal Land</b> <sub>· GPU</sub><br><sub>The fractal flight, with waves riding the music.<br>by <i>Kali</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/visualizers/st-synthwave.jpg" width="260" alt="Synthwave Sunset"><br><b>Synthwave Sunset</b> <sub>· Canvas 2D</sub><br><sub>Retro sun, neon grid and spectrum-shaped mountains.<br>by <i>axiomgraph</i></sub></td></tr>
-<tr><td align="center" valign="top" width="33%"><img src="docs/visualizers/st-exusiai.jpg" width="260" alt="Exusiai Jump"><br><b>Exusiai Jump</b> <sub>· Canvas 2D</sub><br><sub>Exusiai dances faster with the bass and hops on every beat.<br>by <i>KaltsitComeBack</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/visualizers/st-prts-dance.jpg" width="260" alt="PRTS Dance"><br><b>PRTS Dance</b> <sub>· Canvas 2D</sub><br><sub>PRTS dances to the bass and pulses on every beat.<br>by <i>KaltsitComeBack</i></sub></td></tr>
+<tr><td align="center" valign="top" width="33%"><img src="docs/galaxy/gx-audio-galaxy.jpg" width="260" alt="Audio Galaxy"><br><b>Audio Galaxy</b> <sub>· Canvas 2D</sub><br><sub>A spiral galaxy dancing to your music: arms spin with the bass, stars twinkle with the highs, the core flares on the beat.<br>by <i>j0j0</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/visualizers/st-spectralizer.jpg" width="260" alt="Spectralizer"><br><b>Spectralizer</b> <sub>· GPU</sub><br><sub>The smoke, sculpted by your music's real spectrum.<br>by <i>chronos</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/visualizers/st-deepseek-r1.jpg" width="260" alt="Fractal Kaleidoscope"><br><b>Fractal Kaleidoscope</b> <sub>· GPU</sub><br><sub>The kaleidoscope, driven by bass, mids and highs.<br>by <i>Patan77</i></sub></td></tr>
+<tr><td align="center" valign="top" width="33%"><img src="docs/visualizers/st-skurr.jpg" width="260" alt="Psyche Skull"><br><b>Psyche Skull</b> <sub>· GPU</sub><br><sub>The skull, warped by the highs and lows.<br>by <i>im_paul_hi</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/visualizers/st-sound-candy.jpg" width="260" alt="Sound Candy"><br><b>Sound Candy</b> <sub>· GPU</sub><br><sub>Neon rings pulsing with the volume.<br>by <i>Pink</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/visualizers/st-fractal-land.jpg" width="260" alt="Fractal Land"><br><b>Fractal Land</b> <sub>· GPU</sub><br><sub>The fractal flight, with waves riding the music.<br>by <i>Kali</i></sub></td></tr>
+<tr><td align="center" valign="top" width="33%"><img src="docs/visualizers/st-synthwave.jpg" width="260" alt="Synthwave Sunset"><br><b>Synthwave Sunset</b> <sub>· Canvas 2D</sub><br><sub>Retro sun, neon grid and spectrum-shaped mountains.<br>by <i>axiomgraph</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/visualizers/st-exusiai.jpg" width="260" alt="Exusiai Jump"><br><b>Exusiai Jump</b> <sub>· Canvas 2D</sub><br><sub>Exusiai dances faster with the bass and hops on every beat.<br>by <i>KaltsitComeBack</i></sub></td><td align="center" valign="top" width="33%"><img src="docs/visualizers/st-prts-dance.jpg" width="260" alt="PRTS Dance"><br><b>PRTS Dance</b> <sub>· Canvas 2D</sub><br><sub>PRTS dances to the bass and pulses on every beat.<br>by <i>KaltsitComeBack</i></sub></td></tr>
 </table>
 
 - **GPU**: the original GLSL runs inside the visualizer worker, fed with the real spectrum and painted in your skin colours.
-- **Canvas 2D**: feather-light, 100% skin colours, and it jumps on every beat.
+- **Canvas 2D**: feather-light, 100% skin colours, and it jumps on every beat. *Audio Galaxy* is original work by j0j0 (MIT).
+
+## 🎨 Skin
+
+<img src="docs/galaxy/widgets-galaxy.jpg" width="520" alt="Galaxy skin palette">
+
+**Galaxy**: deep space in vaporwave pink, cyan and purple. Nebula panels under a twinkling star field, an aurora line under the banner, and a shell that breathes with Claude (purple while it thinks, a mint flash when it's done). Its banner GIF shows six of the shaders in motion, and its default layout puts the galaxy's widgets and the *Audio Galaxy* visualizer on stage.
+
+Every effect can be switched off in the skin settings: *Glow*, *Nebula*, *Star Field*, *Aurora Line*, *Vibes Glow*, *Claude Pulse*.
 
 ## 🔭 Observatory
 
@@ -132,6 +165,18 @@ Lower `fpsCap` (30) or `maxPixels` (300000) in the widget settings. Hidden widge
 </details>
 
 <details>
+<summary><b>Rate Limit Fuel, Taxi Meter or Context Core say they are offline</b></summary>
+
+They read Claude's status line through MOLTamp. If your Claude Code project sets its own `statusLine`, MOLTamp's never runs: chain MOLTamp's status line script into yours (feed it the same stdin) and they come alive.
+</details>
+
+<details>
+<summary><b>Night Window doesn't know my city</b></summary>
+
+Click the neon sign, type the city, press Enter. You can also write `"location": "Paris"` in the widget settings.
+</details>
+
+<details>
 <summary><b>Why isn't this on the official MOLTamp store?</b></summary>
 
 The official repos are MIT-licensed, while most of these shaders are CC BY-NC-SA 3.0. On top of that, the GPU visualizers use WebGL, and the visualizers repo only accepts pure Canvas 2D.
@@ -165,11 +210,11 @@ All the light in this galaxy comes from the [Shadertoy](https://www.shadertoy.co
 
 Original textures (photos, cubemaps) are replaced with generated ones, so no Shadertoy media is redistributed. Inigo Quilez's *Clouds* and *Elevated* are not ported: their license forbids it.
 
-The **Cyberpunk District** is original work by j0j0.
+The **Cyberpunk District**, **Mission Control**, **Night Lounge**, *Audio Galaxy* and the **Galaxy** skin are original work by j0j0.
 
 ## 📜 License
 
-The **Cyberpunk District** widgets are **MIT**. Most Shadertoy ports are **CC BY-NC-SA 3.0**: credit the authors, no commercial use, share alike.
+The **Cyberpunk District**, **Mission Control** and **Night Lounge** widgets, *Audio Galaxy* and the **Galaxy** skin are **MIT** (except the skin's banner GIF, which shows CC ports). Most Shadertoy ports are **CC BY-NC-SA 3.0**: credit the authors, no commercial use, share alike.
 *Open Ocean*, *Mondrian Hexagons* and the runner code are **MIT**. File-by-file details in [LICENSE.md](LICENSE.md).
 *Exusiai Jump* and *PRTS Dance* are fan art of Arknights characters (owned by Hypergryph).
 

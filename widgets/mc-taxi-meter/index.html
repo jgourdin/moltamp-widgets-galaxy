@@ -1,42 +1,17 @@
 <!--
-  Cyber Vitals — Cyberpunk pack for MOLTamp
-  CPU and memory as vital signs: segmented gauges, Japanese labels, a heartbeat that follows the load, scanlines.
+  Taxi Meter — Mission Control pack for MOLTamp
+  A retro taxi meter for your Claude session: the fare rolls on mechanical drums while Claude works, with tokens, API time, the hourly rate and a lifetime odometer. The roof lamp tells you whether Claude is for hire, on a fare or out of service.
   Author: j0j0 · License: MIT
 -->
-<div id="cy-root" class="vt">
-  <div class="vt-head"><span class="vt-title">生体監視</span><span class="vt-sub">VITALS</span><span class="vt-right" id="vt-up">稼働 --</span></div>
-  <div class="vt-row"><span class="vt-lbl">演算<em>CPU</em></span><div class="vt-bar" id="vt-cpu"></div><span class="vt-val" id="vt-cpu-v">--</span></div>
-  <div class="vt-row"><span class="vt-lbl">記憶<em>MEM</em></span><div class="vt-bar" id="vt-mem"></div><span class="vt-val" id="vt-mem-v">--</span></div>
-  <div class="vt-ecg"><canvas id="cy-canvas"></canvas></div>
-  <div class="vt-foot"><span id="vt-load">負荷 LOAD --</span><span id="vt-bpm">脈拍 -- BPM</span></div>
-  <div class="vt-scan"></div>
-</div>
+<div id="cy-root"><canvas id="cy-canvas"></canvas><div id="cy-label"></div></div>
 
 <style>
-  .vt {
-    position: absolute; inset: 0; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; overflow: hidden;
-    background: var(--c-chrome-bg); color: var(--c-chrome-text); container-type: inline-size;
-    font: calc(clamp(9px, 4.2cqw, 13px) * var(--user-text-scale, 1)) / 1.3 'SF Mono', Menlo, 'Hiragino Sans', monospace;
-  }
-  .vt-head { display: flex; align-items: baseline; gap: 6px; letter-spacing: 0.08em; }
-  .vt-title { color: var(--c-chrome-accent); font-weight: bold; }
-  .vt-sub, .vt-lbl em, .vt-foot { color: var(--c-chrome-dim); }
-  .vt-right { margin-left: auto; color: var(--c-chrome-dim); }
-  .vt-row { display: flex; align-items: center; gap: 8px; }
-  .vt-lbl { width: 5.6em; flex: none; }
-  .vt-lbl em { font-style: normal; margin-left: 0.4em; font-size: 0.85em; }
-  .vt-bar { flex: 1; display: flex; gap: 2px; height: 0.95em; }
-  .vt-bar i { flex: 1; background: var(--c-chrome-border); border-radius: 1px; transition: background 0.4s; }
-  .vt-bar i.on { background: var(--t-green); }
-  .vt-bar i.warn { background: var(--t-yellow); }
-  .vt-bar i.crit { background: var(--t-red); }
-  .vt-val { width: 3.6em; text-align: right; flex: none; color: var(--c-chrome-accent); }
-  .vt-ecg { flex: 1; min-height: 36px; border-top: 1px solid var(--c-chrome-border); border-bottom: 1px solid var(--c-chrome-border); }
-  .vt-ecg canvas { display: block; width: 100%; height: 100%; }
-  .vt-foot { display: flex; justify-content: space-between; letter-spacing: 0.05em; }
-  .vt-scan {
-    position: absolute; inset: 0; pointer-events: none; opacity: 0.35;
-    background: repeating-linear-gradient(to bottom, transparent 0 2px, var(--c-chrome-bg) 2px 3px);
+  #cy-root { position: absolute; inset: 0; overflow: hidden; background: var(--c-chrome-bg); container-type: size; }
+  #cy-canvas { display: block; width: 100%; height: 100%; }
+  #cy-label {
+    position: absolute; left: 8px; bottom: 6px; pointer-events: none; letter-spacing: 0.08em;
+    color: var(--c-chrome-dim); text-shadow: 0 0 6px var(--c-chrome-bg);
+    font: calc(clamp(8px, 3.4cqw, 12px) * var(--user-text-scale, 1)) 'SF Mono', Menlo, 'Hiragino Sans', monospace;
   }
 </style>
 
@@ -340,92 +315,239 @@ var CK = (function () {
   };
 })();
 
-// Cyber Vitals: system.getStats as vital signs; the heartbeat rate follows CPU load.
+// Taxi Meter: stats.read cost, tokens and API time on a retro meter with rolling mechanical drums.
 (function () {
   'use strict';
-  var SEGMENTS = 16;
   var S = CK.surface(document.getElementById('cy-canvas'));
-  var el = function (id) { return document.getElementById(id); };
-  var bars = { cpu: el('vt-cpu'), mem: el('vt-mem') };
-  var vitals = { cpu: null, mem: null, load: null, uptime: null };
-  var cursor = 0, phase = 0, prevY = null, bpm = 60, lastBpm = '';
+  var label = document.getElementById('cy-label');
+  var RATE_WINDOW = 10 * 60e3;
+  var data = { fare: null, tokens: null, api: null, total: null, model: '' }, shown = { fare: 0, total: 0 };
+  var samples = [], linked = false, t = 0, lastText = '', paid = 0;
 
-  Object.keys(bars).forEach(function (k) {
-    for (var i = 0; i < SEGMENTS; i++) bars[k].appendChild(document.createElement('i'));
-  });
-
-  function paintBar(bar, pct) {
-    var on = pct === null ? 0 : Math.round(Math.max(0, Math.min(100, pct)) / 100 * SEGMENTS);
-    for (var i = 0; i < SEGMENTS; i++) {
-      var r = (i + 1) / SEGMENTS;
-      bar.children[i].className = i < on ? (r > 0.85 ? 'crit' : r > 0.6 ? 'warn' : 'on') : '';
+  function num(v) {
+    if (typeof v === 'string') v = parseFloat(v.replace(/[$,\s]/g, ''));
+    return typeof v === 'number' && isFinite(v) ? v : null;
+  }
+  function pick(o, paths) {
+    for (var i = 0; i < paths.length; i++) {
+      var v = o, parts = paths[i].split('.');
+      for (var j = 0; j < parts.length && v !== null && v !== undefined; j++) v = v[parts[j]];
+      v = num(v);
+      if (v !== null) return v;
     }
+    return null;
+  }
+  // "claude-opus-5-5" -> "OPUS 5.5"
+  function plate(m) {
+    m = m && typeof m === 'object' ? m.display_name || m.id || '' : String(m || '');
+    var x = /(opus|sonnet|haiku|fable)[-\s]?(\d+)(?:[-.](\d+))?/i.exec(m);
+    return x ? (x[1] + ' ' + x[2] + (x[3] ? '.' + x[3] : '')).toUpperCase() : m.replace(/^claude-/i, '').toUpperCase().slice(0, 14);
   }
 
   function read() {
-    CK.call('system.getStats').then(function (s) {
+    CK.call('stats.read').then(function (s) {
       s = s || {};
-      var cpu = s.cpu || {}, mem = s.memory || {};
-      vitals.cpu = typeof cpu.usagePct === 'number' ? cpu.usagePct : null;
-      vitals.mem = typeof mem.usagePct === 'number' ? mem.usagePct : null;
-      vitals.load = typeof cpu.loadAvg1m === 'number' ? cpu.loadAvg1m : null;
-      vitals.uptime = typeof s.uptime === 'number' ? s.uptime : null;
-      paintBar(bars.cpu, vitals.cpu);
-      paintBar(bars.mem, vitals.mem);
-      el('vt-cpu-v').textContent = vitals.cpu === null ? '--' : Math.round(vitals.cpu) + '%';
-      el('vt-mem-v').textContent = vitals.mem === null ? '--' : Math.round(vitals.mem) + '%';
-      el('vt-load').textContent = '負荷 LOAD ' + (vitals.load === null ? '--' : vitals.load.toFixed(2));
-      var up = vitals.uptime === null ? '--' :
-        (window.moltamp && moltamp.fmt && moltamp.fmt.duration ? moltamp.fmt.duration(vitals.uptime) : Math.round(vitals.uptime / 3600) + 'h');
-      el('vt-up').textContent = '稼働 ' + up;
-    }).catch(function () {
-      paintBar(bars.cpu, null);
-      paintBar(bars.mem, null);
-      el('vt-cpu-v').textContent = el('vt-mem-v').textContent = '--';
-    });
+      data.fare = pick(s, ['cost', 'cost.total_cost_usd', 'cost.totalCostUsd', 'costUsd', 'cost_usd', 'totalCost', 'sessionCost']);
+      var tin = pick(s, ['tokensIn', 'tokens_in', 'inputTokens']), tout = pick(s, ['tokensOut', 'tokens_out', 'outputTokens']);
+      data.tokens = tin !== null || tout !== null ? (tin || 0) + (tout || 0) : pick(s, ['tokens']);
+      data.api = pick(s, ['apiTime', 'api_time', 'cost.total_api_duration_ms']);
+      data.total = pick(s, ['totalTokens', 'total_tokens']);
+      data.model = plate(s.model);
+      linked = data.fare !== null;
+      if (linked) {
+        var now = Date.now();
+        // A lower fare means a new session started: restart the rate measurement.
+        if (samples.length && data.fare < samples[samples.length - 1][1]) samples = [];
+        samples.push([now, data.fare]);
+        while (samples.length && now - samples[0][0] > RATE_WINDOW) samples.shift();
+      }
+    }).catch(function () { linked = false; });
   }
   read();
-  CK.poll(2000, read);
+  CK.poll(3000, read);
+  CK.onState(function (st) { if (st === 'complete') paid = 1; });
 
-  // PQRST-like beat shape over one cycle (0..1).
-  function beat(p) {
-    function g(c, w, a) { var d = (p - c) / w; return a * Math.exp(-d * d); }
-    return g(0.18, 0.035, 0.12) - g(0.29, 0.012, 0.12) + g(0.31, 0.012, 1) - g(0.335, 0.015, 0.28) + g(0.55, 0.06, 0.22);
+  function perHour() {
+    if (samples.length < 3) return null;
+    var a = samples[0], b = samples[samples.length - 1], dt = (b[0] - a[0]) / 3600e3;
+    return dt > 1 / 60 ? (b[1] - a[1]) / dt : null;
+  }
+  function hms(ms) {
+    var s = Math.floor(ms / 1000), hh = Math.floor(s / 3600), mm = Math.floor(s % 3600 / 60), ss = s % 60;
+    return (hh ? hh + ':' : '') + ('0' + mm).slice(-2) + ':' + ('0' + ss).slice(-2);
+  }
+  function kfmt(n) { return n >= 1e6 ? (n / 1e6).toFixed(n >= 1e8 ? 0 : 1) + 'M' : n >= 1e3 ? Math.round(n / 1e3) + 'k' : String(Math.round(n)); }
+
+  // Mechanical drums: the lowest one rolls continuously, each higher one turns while the one below passes 9 -> 0.
+  function drums(ctx, v, n, x, y, cw, ch, dec, on, colors) {
+    for (var i = 0; i < n; i++) {
+      var dx = x + (n - 1 - i) * cw, p = v / Math.pow(10, i), d = Math.floor(p) % 10, r;
+      if (i === 0) r = p - Math.floor(p);
+      else { var lo = v / Math.pow(10, i - 1); r = Math.floor(lo) % 10 === 9 ? lo - Math.floor(lo) : 0; }
+      var g = ctx.createLinearGradient(0, y, 0, y + ch);
+      g.addColorStop(0, colors.drumEdge); g.addColorStop(0.5, colors.drum); g.addColorStop(1, colors.drumEdge);
+      ctx.fillStyle = g;
+      ctx.fillRect(dx + 1, y, cw - 2, ch);
+      ctx.save();
+      ctx.beginPath(); ctx.rect(dx + 1, y, cw - 2, ch); ctx.clip();
+      ctx.fillStyle = colors.digit;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = CK.font(ch * 0.78, 'bold');
+      // Leading zeros stay blank on the integer part
+      var lead = i > dec && v < Math.pow(10, i);
+      if (on && !lead) {
+        ctx.fillText(String(d), dx + cw / 2, y + ch / 2 - r * ch);
+        ctx.fillText(String((d + 1) % 10), dx + cw / 2, y + ch / 2 + ch - r * ch);
+      } else if (!on) {
+        ctx.fillText('-', dx + cw / 2, y + ch / 2);
+      }
+      ctx.restore();
+      if (dec && i === dec) {
+        var dot = Math.max(3, ch * 0.08);
+        ctx.fillStyle = CK.c.accent;
+        ctx.beginPath(); ctx.arc(dx + cw, y + ch - dot * 1.2, dot / 2, 0, 6.283); ctx.fill();
+      }
+    }
+  }
+
+  function lamp(ctx, x, y, w, h, st) {
+    var on = !linked ? ['回送', 'OUT OF SERVICE', 'yellow'] : paid > 0.05 ? ['支払', 'PAY', 'cyan'] :
+      st === 'idle' || st === 'complete' ? ['空車', 'FOR HIRE', 'red'] : st === 'permission' ? ['停車', 'WAITING FOR YOU', 'magenta'] :
+      st === 'error' ? ['故障', 'BREAKDOWN', 'red'] : ['賃走', 'ON FARE', 'green'];
+    var blink = st === 'permission' || st === 'error' ? Math.sin(t * 6) > 0 : true;
+    ctx.fillStyle = CK.mix('bg', 'fg', 0.06);
+    ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = CK.rgba(on[2], 0.6);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+    if (blink) {
+      var g = ctx.createRadialGradient(x + w / 2, y + h / 2, 0, x + w / 2, y + h / 2, w / 1.6);
+      g.addColorStop(0, CK.rgba(on[2], 0.35));
+      g.addColorStop(1, CK.rgba(on[2], 0));
+      ctx.fillStyle = g;
+      ctx.fillRect(x, y, w, h);
+    }
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = blink ? CK.c[on[2]] : CK.rgba(on[2], 0.35);
+    var big = Math.min(h * 0.55, w / 3.2);
+    ctx.font = CK.font(big, 'bold');
+    ctx.fillText(on[0], x + w / 2, y + h * (h > 34 ? 0.4 : 0.5));
+    if (h > 34) {
+      ctx.font = CK.font(Math.min(h * 0.18, w / 11));
+      ctx.fillText(on[1], x + w / 2, y + h * 0.78);
+    }
+  }
+
+  function small(ctx, title, value, x, y, w, size) {
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.font = CK.font(Math.max(7, size * 0.62));
+    ctx.fillStyle = CK.c.dim;
+    ctx.fillText(title, x, y);
+    ctx.font = CK.font(size, 'bold');
+    ctx.fillStyle = CK.c.text;
+    ctx.fillText(value, x, y + size * 0.85);
   }
 
   CK.loop(function (dt) {
     S.fit();
-    var ctx = S.ctx, w = S.w, h = S.h;
-    if (S.resized) { ctx.fillStyle = CK.c.bg; ctx.fillRect(0, 0, w, h); cursor = 0; prevY = null; S.resized = false; }
-    var cpu = vitals.cpu === null ? 10 : vitals.cpu;
-    bpm += ((55 + cpu * 0.95) - bpm) * (1 - Math.exp(-dt / 1.5));
-    var speed = Math.max(40, w / 3); // px per second, about three seconds per sweep
-    var steps = Math.max(1, Math.round(speed * dt / 1.5));
-    var tone = cpu > 85 ? 'red' : cpu > 60 ? 'yellow' : 'green';
-    for (var s = 0; s < steps; s++) {
-      var dx = speed * dt / steps;
-      phase = (phase + dx / speed * bpm / 60) % 1;
-      var y = h * 0.62 - beat(phase) * h * 0.5;
-      // Erase a band ahead of the cursor, like a hospital monitor.
-      ctx.fillStyle = CK.c.bg;
-      ctx.fillRect(cursor, 0, 14, h);
-      if (prevY !== null) {
-        ctx.strokeStyle = CK.c[tone];
-        ctx.lineWidth = 1.6;
-        ctx.beginPath();
-        ctx.moveTo(cursor - dx, prevY);
-        ctx.lineTo(cursor, y);
-        ctx.stroke();
+    S.resized = false;
+    var ctx = S.ctx, w = S.w, h = S.h, st = CK.state(), light = CK.lum('bg') > 0.5;
+    t += dt;
+    paid *= Math.exp(-dt * 0.5);
+    var ease = 1 - Math.exp(-dt / 0.7);
+    ['fare', 'total'].forEach(function (k) {
+      // Drum units: cents for the fare, tenths of a million tokens for the odometer.
+      var target = data[k] === null ? 0 : k === 'fare' ? data[k] * 100 : data[k] / 1e6 * 10;
+      shown[k] += (target - shown[k]) * ease;
+      if (Math.abs(target - shown[k]) < 0.002) shown[k] = target;
+    });
+    var colors = {
+      drum: light ? CK.mix('bg', 'fg', 0.82) : CK.mix('bg', 'fg', 0.08),
+      drumEdge: light ? CK.mix('bg', 'fg', 0.95) : CK.mix('bg', 'termBg', 0.5),
+      digit: light ? CK.c.bg : CK.c.fg
+    };
+
+    ctx.fillStyle = CK.c.bg;
+    ctx.fillRect(0, 0, w, h);
+    // Casing
+    var m = Math.max(4, Math.min(w, h) * 0.05), bx = m, by = m, bw = w - 2 * m, bh = h - 2 * m;
+    ctx.fillStyle = CK.mix('bg', 'dim', 0.1);
+    ctx.fillRect(bx, by, bw, bh);
+    ctx.strokeStyle = CK.rgba('dim', 0.45);
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+
+    var wide = bw > bh * 2.2, rate = perHour(), on = data.fare !== null;
+    // The wide meter already shows every readout; the label line would cover the roof lamp.
+    if (wide !== label.hidden) label.hidden = wide;
+    if (wide) {
+      // Lamp | fare drums | small readouts
+      var lw = Math.min(bw * 0.2, bh * 1.6), ch = Math.min(bh * 0.62, (bw - lw) / 9.5), cw = ch * 0.68;
+      lamp(ctx, bx + m, by + m, lw, bh - 2 * m, st);
+      var fx = bx + lw + m * 2.5, fy = by + (bh - ch) / 2;
+      ctx.fillStyle = CK.c.dim;
+      ctx.font = CK.font(Math.max(7, ch * 0.24));
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText('料金 FARE $', fx, fy - 2);
+      drums(ctx, shown.fare, 6, fx, fy, cw, ch, 2, on, colors);
+      var sx = fx + cw * 6 + m * 2, size = Math.max(8, Math.min(bh * 0.17, (bx + bw - sx) / 8));
+      if (bx + bw - sx > 60) {
+        small(ctx, 'TOKENS', data.tokens !== null ? kfmt(data.tokens) : '--', sx, by + m, 0, size);
+        small(ctx, 'API TIME', data.api !== null ? hms(data.api) : '--', sx, by + bh / 2, 0, size);
+        if (bx + bw - sx > 150) {
+          small(ctx, 'RATE', rate !== null ? '$' + rate.toFixed(2) + '/h' : '--', sx + (bx + bw - sx) / 2, by + m, 0, size);
+          small(ctx, 'TOTAL', data.total !== null ? kfmt(data.total) + ' tok' : '--', sx + (bx + bw - sx) / 2, by + bh / 2, 0, size);
+        }
       }
-      prevY = y;
-      cursor += dx;
-      if (cursor > w) { cursor = 0; prevY = null; }
+    } else {
+      var lh = Math.max(18, bh * 0.2);
+      lamp(ctx, bx + m, by + m, bw - 2 * m, lh, st);
+      var ch2 = Math.min(bh * 0.24, (bw - 2 * m) / 4.6), cw2 = ch2 * 0.68, fw = cw2 * 6;
+      var fx2 = bx + (bw - fw) / 2, fy2 = by + m + lh + ch2 * 0.55;
+      ctx.fillStyle = CK.c.dim;
+      ctx.font = CK.font(Math.max(7, ch2 * 0.22));
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText('料金 FARE $', fx2, fy2 - 2);
+      drums(ctx, shown.fare, 6, fx2, fy2, cw2, ch2, 2, on, colors);
+      var size2 = Math.max(8, Math.min(bh * 0.06, bw / 14)), ry = fy2 + ch2 + m * 1.5, col2 = bx + m + (bw - 2 * m) / 2;
+      if (ry + size2 * 2 < by + bh) {
+        small(ctx, 'TOKENS', data.tokens !== null ? kfmt(data.tokens) : '--', bx + m * 2, ry, 0, size2);
+        small(ctx, 'API TIME', data.api !== null ? hms(data.api) : '--', col2, ry, 0, size2);
+      }
+      var ry2 = ry + size2 * 2.4;
+      if (ry2 + size2 * 2 < by + bh) {
+        small(ctx, 'RATE', rate !== null ? '$' + rate.toFixed(2) + '/h' : '--', bx + m * 2, ry2, 0, size2);
+        small(ctx, 'MODEL', data.model || '--', col2, ry2, 0, size2);
+      }
+      // Lifetime odometer in tenths of a million tokens
+      var oh = Math.min(size2 * 1.5, (bw - 2 * m) / 9), oy = by + bh - m - oh;
+      if (oy > ry2 + size2 * 2.4 && data.total !== null) {
+        var ow = oh * 0.62;
+        ctx.fillStyle = CK.c.dim;
+        ctx.font = CK.font(Math.max(7, oh * 0.5));
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('TOTAL M tok', bx + m * 2, oy + oh / 2);
+        drums(ctx, shown.total, 6, bx + bw - m * 2 - ow * 6, oy, ow, oh, 1, true, colors);
+      }
     }
-    ctx.fillStyle = CK.c[tone];
-    ctx.fillRect(cursor - 1.5, prevY === null ? h / 2 : prevY - 1.5, 3, 3);
+    if (!on) {
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = CK.font(Math.max(8, Math.min(w / 40, 11)));
+      ctx.fillStyle = CK.c.yellow;
+      ctx.fillText('fare needs the MOLTamp status line', w / 2, by + bh - m - 4);
+    }
     CK.resetCtx(ctx);
-    var b = '脈拍 ' + Math.round(bpm) + ' BPM';
-    if (b !== lastBpm) { lastBpm = b; el('vt-bpm').textContent = b; }
-  }, 60);
+
+    var text = !on ? '料金 · out of service' + (data.total !== null ? ' · lifetime ' + kfmt(data.total) + ' tok' : '')
+      : '料金 · $' + data.fare.toFixed(2) + (data.tokens !== null ? ' · ' + kfmt(data.tokens) + ' tok' : '') + (data.model ? ' · ' + data.model : '');
+    if (text !== lastText) { lastText = text; label.textContent = text; }
+  }, 30);
 })();
 </script>

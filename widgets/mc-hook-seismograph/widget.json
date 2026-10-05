@@ -1,0 +1,19 @@
+{
+  "id": "mc-hook-seismograph",
+  "name": "Hook Seismograph",
+  "version": "1.0.0",
+  "description": "A seismograph of Claude's tool calls: every call shakes the needle in its tool's colour, and a failed call sets off a red earthquake with aftershocks. Click to change the time window (1, 3 or 10 minutes).",
+  "author": "j0j0",
+  "category": "Mission Control",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "event.events",
+      "event.eventCount",
+      "telemetry.bytesPerSec",
+      "telemetry.activity"
+    ]
+  }
+}

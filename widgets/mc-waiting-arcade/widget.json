@@ -1,0 +1,14 @@
+{
+  "id": "mc-waiting-arcade",
+  "name": "Waiting Arcade",
+  "version": "1.0.0",
+  "description": "A pocket space shooter for the moments Claude is busy; it pauses itself and calls you back the moment Claude finishes or needs you. Click to play.",
+  "author": "j0j0",
+  "category": "Mission Control",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "keyboard": true,
+    "shellState": true
+  }
+}

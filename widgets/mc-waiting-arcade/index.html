@@ -1,6 +1,6 @@
 <!--
-  Agent Radar — Cyberpunk pack for MOLTamp
-  Every Claude sub-agent becomes a blip on a sweeping circular radar; finished agents fade out as ghosts.
+  Waiting Arcade — Mission Control pack for MOLTamp
+  A pocket space shooter for the moments Claude is busy; it pauses itself and calls you back the moment Claude finishes or needs you. Click to play.
   Author: j0j0 · License: MIT
 -->
 <div id="cy-root"><canvas id="cy-canvas"></canvas><div id="cy-label"></div></div>
@@ -315,139 +315,301 @@ var CK = (function () {
   };
 })();
 
-// Agent Radar: sub-agents from the agent store as blips; the sweep lights them up as it passes.
+// Waiting Arcade: a small invaders game; pauses itself and calls you back when Claude finishes or needs you.
 (function () {
   'use strict';
-  var S = CK.surface(document.getElementById('cy-canvas'));
+  var canvas = document.getElementById('cy-canvas');
+  var S = CK.surface(canvas);
   var label = document.getElementById('cy-label');
-  var GHOST_MS = 30000, MAX_BLIPS = 40;
-  var blips = {}, activeCount = null, sweep = 0, lastText = '';
+  var SPRITES = [
+    ['...##...', '..####..', '.######.', '##.##.##', '########', '..#..#..', '.#.##.#.', '#.#..#.#'],
+    ['...##...', '..####..', '.######.', '##.##.##', '########', '.#.##.#.', '#......#', '.#....#.'],
+    ['..#..#..', '...##...', '..####..', '.##..##.', '########', '#.####.#', '#.#..#.#', '...##...'],
+    ['..#..#..', '#..##..#', '#.####.#', '###..###', '########', '.######.', '..#..#..', '.#....#.']
+  ];
+  var ROW_TONE = ['magenta', 'cyan', 'green', 'yellow'];
+  var BUSY = { thinking: 1, streaming: 1, 'tool-use': 1 };
+  var cfg = {}, G = null, stars = [], t = 0, lastText = '', wasBusy = false;
+  var keys = { left: false, right: false, fire: false }, mouseX = null, firePressed = false;
 
-  function field(a, names) {
-    for (var i = 0; i < names.length; i++) if (a[names[i]] !== undefined && a[names[i]] !== null && a[names[i]] !== '') return a[names[i]];
-    return undefined;
+  if (window.moltamp && moltamp.settings) {
+    moltamp.settings.read().then(function (c) { cfg = c || {}; if (G) G.hi = Math.max(G.hi, cfg.hi || 0); }).catch(function () {});
+  }
+  for (var i = 0; i < 70; i++) stars.push({ x: Math.random(), y: Math.random(), v: 0.02 + Math.random() * 0.08, s: Math.random() < 0.2 ? 1.6 : 1 });
+
+  function newGame(mode) {
+    G = { mode: mode, score: 0, hi: (G && G.hi) || cfg.hi || 0, lives: 3, wave: 1, inv: [], dir: 1, ox: 0, oy: 0,
+      shots: [], bombs: [], booms: [], ship: { x: S.w / 2, inv: 0 }, ufo: null, ufoT: 8, cool: 0, march: 0,
+      banner: null, bannerTone: 'green', cols: 0, rows: 4, cell: 10 };
+    setupWave();
   }
 
-  // The store shape is not documented: accept an array or a keyed object, and several field names.
-  function normalize(v) {
-    var list = Array.isArray(v) ? v : v && typeof v === 'object' ? Object.keys(v).map(function (k) {
-      var a = v[k];
-      return a && typeof a === 'object' ? Object.assign({ id: k }, a) : { id: k, name: String(a) };
-    }) : [];
-    return list.slice(0, MAX_BLIPS).map(function (a, i) {
-      a = a || {};
-      var id = field(a, ['id', 'agentId', 'agent_id', 'uuid', 'sessionId']) || field(a, ['name', 'description']) || 'agent-' + i;
-      var name = field(a, ['name', 'type', 'subagentType', 'subagent_type', 'agentType', 'description', 'title']) || 'agent';
-      var status = String(field(a, ['status', 'state', 'phase']) || '');
-      var done = /done|complete|finish|stop|end|exit|fail|error|idle|dead/i.test(status) ||
-        a.active === false || a.running === false || !!field(a, ['endedAt', 'finishedAt', 'completedAt']);
-      return { id: String(id), name: String(name), done: done, failed: /fail|error/i.test(status) };
-    });
+  function setupWave() {
+    var w = S.w, h = S.h;
+    G.cols = w < 260 ? 6 : 8;
+    G.cell = Math.max(8, Math.min(w * 0.78 / G.cols, h * 0.42 / G.rows));
+    G.inv = [];
+    for (var r = 0; r < G.rows; r++) for (var c = 0; c < G.cols; c++) G.inv.push({ c: c, r: r, alive: true });
+    G.ox = (w - G.cols * G.cell) / 2;
+    G.oy = h * 0.14;
+    G.dir = 1;
+    G.shots = []; G.bombs = [];
   }
 
-  CK.subscribe('agent', 'agents', function (v) {
-    var now = performance.now(), seen = {};
-    normalize(v).forEach(function (a) {
-      seen[a.id] = true;
-      var b = blips[a.id];
-      if (!b) {
-        b = blips[a.id] = {
-          ang: CK.hash(a.id) * Math.PI * 2, rad: 0.28 + CK.hash(a.id + '#r') * 0.62,
-          name: a.name, born: now, lit: 1, done: false, doneAt: 0, failed: false
-        };
-      }
-      b.name = a.name;
-      if (a.done && !b.done) b.doneAt = now;
-      b.done = a.done;
-      b.failed = a.failed;
-    });
-    // Agents that vanished from the store become ghosts.
-    Object.keys(blips).forEach(function (id) {
-      if (!seen[id] && !blips[id].done) { blips[id].done = true; blips[id].doneAt = now; }
-    });
+  function invPos(v) { return { x: G.ox + v.c * G.cell, y: G.oy + v.r * G.cell * 0.85 }; }
+
+  function boom(x, y, tone, n) {
+    for (var i = 0; i < n; i++) {
+      var a = Math.random() * 6.283, sp = 30 + Math.random() * 90;
+      G.booms.push({ x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 0.6 + Math.random() * 0.4, tone: tone });
+    }
+    if (G.booms.length > 260) G.booms.splice(0, G.booms.length - 260);
+  }
+
+  function pause(text, tone) {
+    if (!G || G.mode !== 'play') return;
+    G.mode = 'paused';
+    G.banner = text;
+    G.bannerTone = tone;
+    keys.left = keys.right = keys.fire = false;
+  }
+
+  function saveHi() {
+    if (G.score <= (cfg.hi || 0)) return;
+    cfg.hi = G.score;
+    if (window.moltamp && moltamp.settings) moltamp.settings.write(cfg).catch(function () {});
+  }
+
+  // Claude calls you back: the game pauses on the transitions that need your attention.
+  CK.onState(function (now) {
+    if (now === 'complete' || (now === 'idle' && wasBusy)) pause('✅ CLAUDE IS DONE', 'green');
+    else if (now === 'permission') pause('✋ CLAUDE NEEDS YOU', 'yellow');
+    else if (now === 'error') pause('💥 CLAUDE HIT AN ERROR', 'red');
+    wasBusy = !!BUSY[now];
   });
-  CK.subscribe('agent', 'activeCount', function (v) { activeCount = typeof v === 'number' ? v : null; });
+
+  // ---- input: click to take control, then keyboard (forwarded by MOLTamp or native) or mouse
+  canvas.addEventListener('click', function () {
+    if (!G || G.mode === 'attract' || G.mode === 'over') { newGame('play'); return; }
+    if (G.mode === 'paused') { G.mode = 'play'; G.banner = null; return; }
+    firePressed = true;
+  });
+  canvas.addEventListener('mousemove', function (e) {
+    var r = canvas.getBoundingClientRect();
+    mouseX = (e.clientX - r.left) * S.w / r.width;
+  });
+  canvas.addEventListener('mouseleave', function () { mouseX = null; });
+
+  function onKey(key, down) {
+    if (!G || G.mode === 'attract') return false;
+    var k = String(key || '').toLowerCase();
+    if (down && (G.mode === 'paused' || G.mode === 'over')) {
+      if (k === ' ' || k === 'enter' || k === 'p') { if (G.mode === 'over') newGame('play'); else { G.mode = 'play'; G.banner = null; } return true; }
+      return false;
+    }
+    if (k === 'arrowleft' || k === 'a' || k === 'q') { keys.left = down; return true; }
+    if (k === 'arrowright' || k === 'd') { keys.right = down; return true; }
+    if (k === ' ' || k === 'arrowup' || k === 'w' || k === 'z') { keys.fire = down; if (down) firePressed = true; return true; }
+    if (down && (k === 'p' || k === 'escape')) { pause('⏸ PAUSED', 'accent'); return true; }
+    return false;
+  }
+  if (window.moltamp && moltamp.onKeyDown) {
+    moltamp.onKeyDown(function (key) { onKey(key, true); });
+    if (moltamp.onKeyUp) moltamp.onKeyUp(function (key) { onKey(key, false); });
+  }
+  window.addEventListener('keydown', function (e) { if (onKey(e.key, true)) e.preventDefault(); });
+  window.addEventListener('keyup', function (e) { onKey(e.key, false); });
+
+  // ---- simulation
+  function update(dt) {
+    var w = S.w, h = S.h, cell = G.cell, ship = G.ship, shipY = h - cell * 0.9, human = G.mode === 'play';
+    if (G.mode !== 'play' && G.mode !== 'attract') return;
+    var alive = G.inv.filter(function (v) { return v.alive; });
+    if (!alive.length) { G.wave++; setupWave(); return; }
+
+    // Ship: keys, mouse, or the attract-mode pilot
+    var target = ship.x;
+    if (human) {
+      if (mouseX !== null) target = mouseX;
+      if (keys.left) target = ship.x - w;
+      if (keys.right) target = ship.x + w;
+    } else {
+      var low = alive.reduce(function (a, v) { return v.r >= a.r ? v : a; }, alive[0]);
+      target = invPos(low).x + cell / 2 + Math.sin(t * 1.3) * cell * 0.6;
+    }
+    var maxV = w * 0.9 * dt;
+    ship.x += Math.max(-maxV, Math.min(maxV, target - ship.x));
+    ship.x = Math.max(cell * 0.6, Math.min(w - cell * 0.6, ship.x));
+    ship.inv = Math.max(0, ship.inv - dt);
+
+    G.cool -= dt;
+    var wantFire = human ? (firePressed || keys.fire) : Math.random() < dt * 2.5;
+    firePressed = false;
+    if (wantFire && G.cool <= 0 && G.shots.length < 2) { G.shots.push({ x: ship.x, y: shipY - cell * 0.4 }); G.cool = 0.28; }
+
+    // Formation march: faster as it thins out and with every wave
+    var speed = cell * (0.6 + 2.6 * (1 - alive.length / G.inv.length)) * (1 + 0.15 * (G.wave - 1));
+    G.ox += G.dir * speed * dt;
+    var minC = Infinity, maxC = -Infinity, maxR = 0;
+    alive.forEach(function (v) { minC = Math.min(minC, v.c); maxC = Math.max(maxC, v.c); maxR = Math.max(maxR, v.r); });
+    var left = G.ox + minC * cell, right = G.ox + (maxC + 1) * cell;
+    if ((G.dir > 0 && right > w - cell * 0.2) || (G.dir < 0 && left < cell * 0.2)) { G.dir *= -1; G.oy += cell * 0.35; }
+    G.march += dt * speed / cell;
+
+    // Bombs from the lowest invader of a random column
+    if (Math.random() < dt * (0.7 + 0.25 * G.wave)) {
+      var shooter = alive[(Math.random() * alive.length) | 0], col = alive.filter(function (v) { return v.c === shooter.c; });
+      var bottom = col.reduce(function (a, v) { return v.r > a.r ? v : a; }, col[0]), bp = invPos(bottom);
+      G.bombs.push({ x: bp.x + cell / 2, y: bp.y + cell * 0.7 });
+    }
+
+    // UFO pass
+    G.ufoT -= dt;
+    if (!G.ufo && G.ufoT <= 0) { G.ufo = { x: -cell, dir: 1 }; G.ufoT = 12 + Math.random() * 10; }
+    if (G.ufo) { G.ufo.x += G.ufo.dir * w * 0.25 * dt; if (G.ufo.x > w + cell) G.ufo = null; }
+
+    // Player shots
+    for (var i = G.shots.length - 1; i >= 0; i--) {
+      var s = G.shots[i];
+      s.y -= h * 1.1 * dt;
+      var hit = false;
+      for (var j = 0; j < alive.length && !hit; j++) {
+        var p = invPos(alive[j]);
+        if (s.x > p.x + cell * 0.12 && s.x < p.x + cell * 0.88 && s.y > p.y && s.y < p.y + cell * 0.7) {
+          alive[j].alive = false; hit = true;
+          if (human) G.score += (G.rows - alive[j].r) * 10;
+          boom(p.x + cell / 2, p.y + cell * 0.35, ROW_TONE[alive[j].r % 4], 14);
+        }
+      }
+      if (!hit && G.ufo && Math.abs(s.x - G.ufo.x) < cell * 0.6 && Math.abs(s.y - h * 0.07) < cell * 0.35) {
+        hit = true; if (human) G.score += 100 + ((Math.random() * 3) | 0) * 100;
+        boom(G.ufo.x, h * 0.07, 'red', 24); G.ufo = null;
+      }
+      if (hit || s.y < 0) G.shots.splice(i, 1);
+    }
+
+    // Bombs
+    for (i = G.bombs.length - 1; i >= 0; i--) {
+      var bmb = G.bombs[i];
+      bmb.y += h * 0.42 * dt;
+      if (Math.abs(bmb.x - ship.x) < cell * 0.45 && bmb.y > shipY - cell * 0.3 && bmb.y < shipY + cell * 0.3 && ship.inv <= 0) {
+        G.bombs.splice(i, 1);
+        boom(ship.x, shipY, 'accent', 30);
+        ship.inv = 1.6;
+        if (human && --G.lives <= 0) { G.mode = 'over'; G.banner = 'GAME OVER'; G.bannerTone = 'red'; saveHi(); }
+        continue;
+      }
+      if (bmb.y > h) G.bombs.splice(i, 1);
+    }
+
+    // Invaders reaching the ship line end the game (attract mode just restarts)
+    if (G.oy + maxR * cell * 0.85 + cell * 0.7 > shipY - cell * 0.3) {
+      if (human) { G.mode = 'over'; G.banner = 'GAME OVER'; G.bannerTone = 'red'; saveHi(); } else setupWave();
+    }
+    G.hi = Math.max(G.hi, G.score);
+  }
+
+  // ---- rendering
+  function sprite(ctx, rows, x, y, size, tone) {
+    var px = size / 8;
+    ctx.fillStyle = CK.c[tone];
+    for (var r = 0; r < 8; r++) for (var c = 0; c < 8; c++) if (rows[r][c] === '#') ctx.fillRect(x + c * px, y + r * px, px + 0.3, px + 0.3);
+  }
+
+  function center(ctx, text, y, size, tone, box) {
+    ctx.font = CK.font(size, 'bold');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    if (box) {
+      var tw = ctx.measureText(text).width + size * 1.4;
+      ctx.fillStyle = CK.rgba('bg', 0.85);
+      ctx.fillRect(S.w / 2 - tw / 2, y - size, tw, size * 2);
+      ctx.strokeStyle = CK.c[tone];
+      ctx.strokeRect(S.w / 2 - tw / 2 + 0.5, y - size + 0.5, tw - 1, size * 2 - 1);
+    }
+    ctx.fillStyle = CK.c[tone];
+    ctx.fillText(text, S.w / 2, y);
+  }
 
   CK.loop(function (dt) {
     S.fit();
-    S.resized = false;
-    var ctx = S.ctx, w = S.w, h = S.h, now = performance.now(), st = CK.state();
-    var cx = w / 2, cy = h / 2, R = Math.min(w, h) * 0.44;
-    var tone = st === 'error' ? 'red' : 'green';
-    sweep = (sweep + dt * Math.PI * 2 / 3.2) % (Math.PI * 2);
+    if (!G || S.resized) { newGame(G && G.mode === 'play' ? 'play' : 'attract'); S.resized = false; }
+    var ctx = S.ctx, w = S.w, h = S.h, cell = G.cell, st = CK.state();
+    t += dt;
+    update(dt);
 
     ctx.fillStyle = CK.c.bg;
     ctx.fillRect(0, 0, w, h);
-
-    // Rings, crosshair, ticks
-    ctx.strokeStyle = CK.rgba('dim', 0.28);
-    ctx.lineWidth = 1;
-    for (var r = 1; r <= 4; r++) { ctx.beginPath(); ctx.arc(cx, cy, R * r / 4, 0, 6.283); ctx.stroke(); }
-    ctx.beginPath();
-    ctx.moveTo(cx - R, cy); ctx.lineTo(cx + R, cy); ctx.moveTo(cx, cy - R); ctx.lineTo(cx, cy + R);
-    ctx.stroke();
-    ctx.beginPath();
-    for (var k = 0; k < 36; k++) {
-      var a0 = k * Math.PI / 18, l = k % 3 === 0 ? 7 : 3;
-      ctx.moveTo(cx + Math.cos(a0) * R, cy + Math.sin(a0) * R);
-      ctx.lineTo(cx + Math.cos(a0) * (R - l), cy + Math.sin(a0) * (R - l));
+    ctx.fillStyle = CK.c.fg;
+    for (var i = 0; i < stars.length; i++) {
+      var s = stars[i];
+      s.y = (s.y + s.v * dt * (G.mode === 'play' ? 1.6 : 0.6)) % 1;
+      ctx.globalAlpha = 0.35;
+      ctx.fillRect(s.x * w, s.y * h, s.s, s.s);
     }
-    ctx.stroke();
+    ctx.globalAlpha = 1;
 
-    // Sweep wedge with a fading tail
-    if (ctx.createConicGradient) {
-      var cg = ctx.createConicGradient(sweep - Math.PI * 0.5, cx, cy);
-      cg.addColorStop(0, CK.rgba(tone, 0));
-      cg.addColorStop(0.24, CK.rgba(tone, 0.22));
-      cg.addColorStop(0.25, CK.rgba(tone, 0));
-      cg.addColorStop(1, CK.rgba(tone, 0));
-      ctx.fillStyle = cg;
-      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.arc(cx, cy, R, sweep - Math.PI * 0.5, sweep); ctx.closePath(); ctx.fill();
-    }
-    ctx.strokeStyle = CK.rgba(tone, 0.85);
-    ctx.lineWidth = 1.4;
-    ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(sweep) * R, cy + Math.sin(sweep) * R); ctx.stroke();
-
-    // Blips
-    var active = 0, showNames = w > 180;
-    ctx.font = CK.font(9);
-    ctx.textBaseline = 'middle';
-    Object.keys(blips).forEach(function (id) {
-      var b = blips[id];
-      if (b.done && now - b.doneAt > GHOST_MS) { delete blips[id]; return; }
-      if (!b.done) active++;
-      var diff = (sweep - b.ang + Math.PI * 4) % (Math.PI * 2);
-      if (diff < 0.12) b.lit = 1;
-      b.lit *= Math.exp(-dt * (b.done ? 1.2 : 0.6));
-      var x = cx + Math.cos(b.ang) * b.rad * R, y = cy + Math.sin(b.ang) * b.rad * R;
-      var fade = b.done ? Math.max(0, 1 - (now - b.doneAt) / GHOST_MS) : 1;
-      var col = b.failed ? 'red' : b.done ? 'dim' : tone;
-      var pulse = b.done ? 0 : 0.5 + 0.5 * Math.sin(now / 180 + b.ang * 5);
-      ctx.fillStyle = CK.rgba(col, (0.25 + 0.75 * Math.max(b.lit, b.done ? 0 : 0.35)) * fade);
-      ctx.beginPath(); ctx.arc(x, y, (b.done ? 2.2 : 3) + pulse * 1.5, 0, 6.283); ctx.fill();
-      if (!b.done) {
-        ctx.strokeStyle = CK.rgba(col, 0.4 * b.lit);
-        ctx.beginPath(); ctx.arc(x, y, 6 + (1 - b.lit) * 10, 0, 6.283); ctx.stroke();
-      }
-      if (showNames) {
-        ctx.fillStyle = CK.rgba(b.done ? 'dim' : 'text', (b.done ? 0.5 : 0.9) * fade);
-        ctx.textAlign = x > cx ? 'left' : 'right';
-        ctx.fillText(b.name.length > 16 ? b.name.slice(0, 15) + '…' : b.name, x + (x > cx ? 8 : -8), y);
-      }
+    var frame = Math.floor(G.march * 2) % 2;
+    G.inv.forEach(function (v) {
+      if (!v.alive) return;
+      var p = invPos(v);
+      sprite(ctx, SPRITES[(v.r % 2) * 2 + frame], p.x + cell * 0.15, p.y, cell * 0.7, ROW_TONE[v.r % 4]);
     });
+    if (G.ufo) {
+      ctx.fillStyle = CK.c.red;
+      ctx.beginPath(); ctx.ellipse(G.ufo.x, h * 0.07, cell * 0.55, cell * 0.2, 0, 0, 6.283); ctx.fill();
+      ctx.fillStyle = CK.c.magenta;
+      ctx.beginPath(); ctx.ellipse(G.ufo.x, h * 0.07 - cell * 0.14, cell * 0.25, cell * 0.16, 0, 0, 6.283); ctx.fill();
+    }
+    var shipY = h - cell * 0.9;
+    if (!(G.ship.inv > 0 && Math.sin(t * 30) > 0)) {
+      ctx.fillStyle = CK.c.accent;
+      ctx.beginPath();
+      ctx.moveTo(G.ship.x, shipY - cell * 0.45);
+      ctx.lineTo(G.ship.x + cell * 0.45, shipY + cell * 0.25);
+      ctx.lineTo(G.ship.x - cell * 0.45, shipY + cell * 0.25);
+      ctx.closePath(); ctx.fill();
+    }
+    ctx.fillStyle = CK.c.fg;
+    G.shots.forEach(function (s2) { ctx.fillRect(s2.x - 1, s2.y - cell * 0.3, 2, cell * 0.3); });
+    ctx.fillStyle = CK.c.red;
+    G.bombs.forEach(function (b) { ctx.fillRect(b.x - 1.5, b.y - cell * 0.25, 3, cell * 0.25); });
+    for (i = G.booms.length - 1; i >= 0; i--) {
+      var bm = G.booms[i];
+      bm.x += bm.vx * dt; bm.y += bm.vy * dt; bm.life -= dt;
+      if (bm.life <= 0) { G.booms.splice(i, 1); continue; }
+      ctx.globalAlpha = Math.min(1, bm.life * 1.6);
+      ctx.fillStyle = CK.c[bm.tone];
+      ctx.fillRect(bm.x, bm.y, 2, 2);
+    }
+    ctx.globalAlpha = 1;
 
-    // Centre readout
-    var count = activeCount !== null ? activeCount : active;
-    ctx.textAlign = 'center';
-    ctx.fillStyle = count ? CK.c.accent : CK.rgba('dim', 0.8);
-    ctx.font = CK.font(Math.max(11, R * 0.16), 'bold');
-    ctx.fillText(count ? String(count) : '無接触', cx, cy - R * 0.06);
-    ctx.font = CK.font(Math.max(8, R * 0.07));
-    ctx.fillStyle = CK.c.dim;
-    ctx.fillText(count ? '子機 ACTIVE' : 'NO CONTACT', cx, cy + R * 0.1);
+    // HUD
+    ctx.font = CK.font(Math.max(8, cell * 0.38));
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = CK.c.text;
+    var hud = G.mode === 'attract' ? 'HI ' + G.hi : 'SCORE ' + G.score + '   HI ' + G.hi + '   WAVE ' + G.wave + '   ' + new Array(G.lives + 1).join('♥');
+    ctx.fillText(hud, 6, 6);
+
+    // Overlays
+    if (G.mode === 'attract') {
+      center(ctx, '待機ゲーム WAITING ARCADE', h * 0.66, Math.max(10, Math.min(w / 20, h / 11)), 'accent', true);
+      center(ctx, BUSY[st] ? 'Claude is working — click to play' : 'click to play', h * 0.78, Math.max(8, Math.min(w / 32, h / 17)), 'text', false);
+    } else if (G.mode === 'paused' || G.mode === 'over') {
+      var tone = G.bannerTone, blink = 0.5 + 0.5 * Math.sin(t * 6);
+      if (G.mode === 'paused' && tone !== 'accent') {
+        ctx.strokeStyle = CK.rgba(tone, 0.35 + 0.6 * blink);
+        ctx.lineWidth = 4;
+        ctx.strokeRect(2, 2, w - 4, h - 4);
+        ctx.lineWidth = 1;
+      }
+      center(ctx, G.banner, h * 0.48, Math.max(11, Math.min(w / 16, h / 9)), tone, true);
+      center(ctx, G.mode === 'over' ? 'SCORE ' + G.score + ' · click to retry' : 'click or press space to resume', h * 0.62, Math.max(8, Math.min(w / 32, h / 18)), 'text', false);
+    }
     CK.resetCtx(ctx);
 
-    var text = '索敵 · ' + Object.keys(blips).length + ' tracked';
+    var text = G.mode === 'play' ? 'ゲーム中 · ←/→ or mouse · space / click fires · P pauses' : G.mode === 'paused' ? '一時停止 · PAUSED' : '待機 · ' + (BUSY[st] ? 'Claude is busy' : 'Claude is idle');
     if (text !== lastText) { lastText = text; label.textContent = text; }
   });
 })();

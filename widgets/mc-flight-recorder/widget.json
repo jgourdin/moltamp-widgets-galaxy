@@ -1,0 +1,18 @@
+{
+  "id": "mc-flight-recorder",
+  "name": "Flight Recorder",
+  "version": "1.0.0",
+  "description": "The black box of the last hour: a timeline of what Claude was doing (thinking, running tools, waiting for you, failing) with your prompts, errors and commits as markers, plus where the time went. Click to zoom between 15 minutes, 1 hour and 4 hours.",
+  "author": "j0j0",
+  "category": "Mission Control",
+  "sizing": "fill",
+  "agent": "*",
+  "api": {
+    "shellState": true,
+    "stores": [
+      "event.events",
+      "event.eventCount",
+      "git.status"
+    ]
+  }
+}

@@ -1,0 +1,863 @@
+<!--
+  Night Window — Night Lounge pack for MOLTamp
+  A rainy window onto a neon city at night, driven by your real weather: rain runs down the glass, snow drifts, fog rolls in, storms flash, clear skies show the moon. Click the neon sign to set your city.
+  Author: j0j0 · License: MIT
+-->
+<div id="cy-root"><canvas id="cy-canvas"></canvas><div id="cy-label"></div>
+  <input id="nl-city" type="text" spellcheck="false" autocomplete="off" placeholder="City, e.g. Paris" aria-label="Weather city"></div>
+
+<style>
+  #cy-root { position: absolute; inset: 0; overflow: hidden; background: var(--c-chrome-bg); container-type: size; }
+  #cy-canvas { display: block; width: 100%; height: 100%; }
+  #cy-label {
+    position: absolute; left: 8px; bottom: 6px; pointer-events: none; letter-spacing: 0.08em;
+    color: var(--c-chrome-dim); text-shadow: 0 0 6px var(--c-chrome-bg);
+    background: color-mix(in srgb, var(--c-chrome-bg) 72%, transparent); padding: 1px 5px; border-radius: 3px;
+    font: calc(clamp(8px, 3.4cqw, 12px) * var(--user-text-scale, 1)) 'SF Mono', Menlo, 'Hiragino Sans', monospace;
+  }
+  #nl-city {
+    display: none; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(220px, 80%);
+    padding: 5px 8px; border: 1px solid var(--c-chrome-accent); border-radius: 3px; outline: none;
+    background: var(--c-chrome-bg); color: var(--c-chrome-text); box-shadow: 0 0 12px var(--c-chrome-accent);
+    font: calc(12px * var(--user-text-scale, 1)) 'SF Mono', Menlo, monospace; letter-spacing: 0.06em;
+  }
+</style>
+
+<script>
+// cyber-kit — shared runtime of the Cyberpunk widget pack (MIT, j0j0).
+// Skin colours resolved for canvas use, DPR-aware canvas, pause when hidden, Claude state, telemetry.
+var CK = (function () {
+  'use strict';
+
+  var hasSdk = typeof window.moltamp !== 'undefined';
+
+  // ------------------------------------------------------------------ skin colours
+  var VARS = {
+    bg: '--c-chrome-bg', text: '--c-chrome-text', accent: '--c-chrome-accent', dim: '--c-chrome-dim',
+    border: '--c-chrome-border', fg: '--t-foreground', termBg: '--t-background', red: '--t-red',
+    green: '--t-green', yellow: '--t-yellow', blue: '--t-blue', cyan: '--t-cyan', magenta: '--t-magenta'
+  };
+  // A colour missing from the skin borrows another skin colour, never a hardcoded value.
+  var BORROW = {
+    text: ['fg', 'accent'], fg: ['text', 'accent'], accent: ['text', 'fg'], dim: ['text', 'fg'], border: ['dim', 'text'],
+    bg: ['termBg'], termBg: ['bg'], red: ['magenta', 'accent'], green: ['cyan', 'accent'], yellow: ['accent', 'red'],
+    blue: ['cyan', 'accent'], cyan: ['blue', 'accent'], magenta: ['red', 'accent']
+  };
+  var probeEl = document.createElement('span');
+  probeEl.style.display = 'none';
+  (document.body || document.documentElement).appendChild(probeEl);
+  var pc = document.createElement('canvas');
+  pc.width = pc.height = 1;
+  var pctx = pc.getContext('2d', { willReadFrequently: true });
+  var rgb = {};
+  var c = {};
+
+  // Resolves any CSS colour the skin may use (hex, rgb, var(), color-mix()) to RGB bytes.
+  function readVar(name) {
+    var raw = getComputedStyle(document.documentElement).getPropertyValue(VARS[name]).trim();
+    if (!raw) return null;
+    probeEl.style.color = '';
+    probeEl.style.color = raw;
+    var computed = getComputedStyle(probeEl).color;
+    pctx.fillStyle = '#010203';
+    pctx.fillStyle = computed;
+    if (pctx.fillStyle === '#010203' && computed !== 'rgb(1, 2, 3)') return null;
+    pctx.clearRect(0, 0, 1, 1);
+    pctx.fillRect(0, 0, 1, 1);
+    var d = pctx.getImageData(0, 0, 1, 1).data;
+    return [d[0], d[1], d[2]];
+  }
+
+  function refreshColors() {
+    var name, raw = {};
+    for (name in VARS) raw[name] = readVar(name);
+    for (name in VARS) {
+      var v = raw[name], chain = BORROW[name] || [];
+      for (var i = 0; !v && i < chain.length; i++) v = raw[chain[i]];
+      if (!v) {
+        // Last resort: the host's own text colour, still a skin value.
+        probeEl.style.color = '';
+        var m = /(\d+)\D+(\d+)\D+(\d+)/.exec(getComputedStyle(document.body || document.documentElement).color) || [0, 128, 128, 128];
+        v = [+m[1], +m[2], +m[3]];
+      }
+      rgb[name] = v;
+      c[name] = 'rgb(' + v[0] + ',' + v[1] + ',' + v[2] + ')';
+    }
+  }
+  refreshColors();
+
+  function rgba(name, a) {
+    var v = rgb[name] || rgb.text;
+    return 'rgba(' + v[0] + ',' + v[1] + ',' + v[2] + ',' + a + ')';
+  }
+
+  function mix(a, b, t, alpha) {
+    var x = rgb[a] || rgb.text, y = rgb[b] || rgb.text;
+    var r = Math.round(x[0] + (y[0] - x[0]) * t), g = Math.round(x[1] + (y[1] - x[1]) * t), bl = Math.round(x[2] + (y[2] - x[2]) * t);
+    return alpha === undefined ? 'rgb(' + r + ',' + g + ',' + bl + ')' : 'rgba(' + r + ',' + g + ',' + bl + ',' + alpha + ')';
+  }
+
+  function lum(name) {
+    var v = rgb[name] || rgb.text;
+    return (0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]) / 255;
+  }
+
+  // ------------------------------------------------------------------ sdk wrappers
+  // moltamp.poll only: it cleans itself up when the widget unloads (store rule: no raw setInterval).
+  function poll(ms, fn) {
+    if (hasSdk && moltamp.poll) return moltamp.poll(ms, fn);
+    return function () {};
+  }
+
+  function subscribe(store, selector, cb) {
+    if (!hasSdk || !moltamp.subscribe) return function () {};
+    try { return moltamp.subscribe(store, selector, cb) || function () {}; } catch (e) { return function () {}; }
+  }
+
+  function call(channel) {
+    if (!hasSdk || !moltamp.call) return Promise.reject(new Error('no sdk'));
+    try { return Promise.resolve(moltamp.call.apply(moltamp, arguments)); } catch (e) { return Promise.reject(e); }
+  }
+
+  // ------------------------------------------------------------------ text scale (Settings > Display)
+  var textScale = 1;
+  if (hasSdk && moltamp.settings) {
+    moltamp.settings.read().then(function (cfg) {
+      cfg = cfg || {};
+      if (typeof cfg.widgetTextScale === 'number') textScale = cfg.widgetTextScale;
+      document.documentElement.style.setProperty('--user-text-scale', String(textScale));
+    }).catch(function () { /* first run: no settings */ });
+  }
+
+  function font(size, weight) {
+    return (weight || 'normal') + ' ' + Math.max(7, size * textScale).toFixed(1) +
+      'px "SF Mono", Menlo, "Hiragino Sans", "Hiragino Kaku Gothic ProN", monospace';
+  }
+
+  // ------------------------------------------------------------------ Claude shell state
+  var STATES = ['idle', 'thinking', 'streaming', 'tool-use', 'permission', 'error', 'complete'];
+  var state = { name: 'idle', since: performance.now(), seen: false };
+  var stateListeners = [];
+  window.addEventListener('message', function (e) {
+    var d = e.data;
+    if (!d || d.type !== 'moltamp:push' || d.subscriptionId !== 'shell-state' || STATES.indexOf(d.data) < 0) return;
+    var prev = state.name;
+    state.name = d.data;
+    state.since = performance.now();
+    state.seen = true;
+    for (var i = 0; i < stateListeners.length; i++) {
+      try { stateListeners[i](state.name, prev); } catch (err) { /* keep other listeners alive */ }
+    }
+  });
+
+  function currentState() {
+    // "complete" is a moment, not a mode: fall back to idle after a few seconds.
+    if (state.name === 'complete' && performance.now() - state.since > 4000) return 'idle';
+    return state.name;
+  }
+
+  // ------------------------------------------------------------------ terminal telemetry
+  var tel = { bytes: 0, activity: 'idle', level: 0, started: false };
+  function telemetry() {
+    if (!tel.started) {
+      tel.started = true;
+      subscribe('telemetry', 'bytesPerSec', function (v) { tel.bytes = Number(v) || 0; });
+      subscribe('telemetry', 'activity', function (v) { tel.activity = v || 'idle'; });
+    }
+    return tel;
+  }
+
+  // 0..1 terminal energy, log-scaled bytes plus the activity level, smoothed by the caller's dt.
+  function telemetryLevel(dt) {
+    var target = Math.min(1, Math.log(1 + tel.bytes) / Math.log(1 + 200000)) * 0.75 +
+      (tel.activity === 'high' ? 0.35 : tel.activity === 'low' ? 0.15 : 0);
+    tel.level += (Math.min(1, target) - tel.level) * (1 - Math.exp(-(dt || 0.016) / 0.5));
+    return tel.level;
+  }
+
+  // ------------------------------------------------------------------ Claude Code hook events
+  // event.events is a ring buffer of the last ~200 hook payloads from every session; callers only
+  // want what is new, so entries are de-duplicated by timestamp, hook, tool and session.
+  var evSeen = {}, evQueue = [], evListeners = [], evStarted = false;
+  function eventKey(e) { return [e._ts, e._hook || e.hook_event_name, e.tool_name, e._session || e.session_id].join('|'); }
+  function onEvents(cb) {
+    evListeners.push(cb);
+    if (evStarted) return;
+    evStarted = true;
+    var first = true;
+    subscribe('event', 'events', function (v) {
+      var list = Array.isArray(v) ? v : v && typeof v === 'object' ? Object.keys(v).map(function (k) { return v[k]; }) : [];
+      var fresh = [];
+      for (var i = 0; i < list.length; i++) {
+        var e = list[i];
+        if (!e || typeof e !== 'object') continue;
+        var k = eventKey(e);
+        if (evSeen[k]) continue;
+        evSeen[k] = true;
+        evQueue.push(k);
+        fresh.push(e);
+      }
+      while (evQueue.length > 800) delete evSeen[evQueue.shift()];
+      var history = first;
+      first = false;
+      if (fresh.length) for (var j = 0; j < evListeners.length; j++) {
+        try { evListeners[j](fresh, history); } catch (err) { /* keep other listeners alive */ }
+      }
+    });
+  }
+
+  // A failure is read from the tool's response or the hook name, never from its input
+  // (a command that merely contains the word "error" is not a failure).
+  function isFailure(e) {
+    var hook = String(e.hook_event_name || e._hook || '');
+    if (/fail|error/i.test(hook)) return true;
+    var r = e.tool_response;
+    if (!r || typeof r !== 'object') return false;
+    if (r.is_error === true || r.isError === true || r.success === false || r.interrupted === true) return true;
+    var code = r.exitCode !== undefined ? r.exitCode : r.exit_code !== undefined ? r.exit_code : r.code;
+    if (typeof code === 'number' && code !== 0) return true;
+    return typeof r.error === 'string' && r.error.length > 0;
+  }
+
+  function toolLabel(name) {
+    name = String(name || '?');
+    if (name.indexOf('mcp__') !== 0) return name;
+    // mcp__plugin_chrome-devtools-mcp_chrome-devtools__take_screenshot -> chrome-devtools
+    var server = name.split('__')[1] || 'mcp';
+    server = server.replace(/^plugin_/, '').replace(/^claude_ai_/, '').split('_').pop();
+    return 'mcp:' + server;
+  }
+
+  // ------------------------------------------------------------------ canvas + loop
+  // Paused while off screen (hidden tab) or while the whole page is hidden; both must clear to resume.
+  var onScreen = true, pageVisible = !document.hidden, watching = false;
+  function visibleNow() { return onScreen && pageVisible; }
+  function watch(el) {
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver(function (entries) { onScreen = entries[entries.length - 1].isIntersecting; }).observe(el);
+    }
+    if (!watching) {
+      watching = true;
+      document.addEventListener('visibilitychange', function () { pageVisible = !document.hidden; });
+    }
+  }
+
+  function surface(el) {
+    var s = { el: el, ctx: el.getContext('2d'), w: 0, h: 0, dpr: 1, resized: true };
+    s.fit = function () {
+      var dpr = Math.min(2, window.devicePixelRatio || 1);
+      var w = Math.max(1, el.clientWidth), h = Math.max(1, el.clientHeight);
+      if (w !== s.w || h !== s.h || dpr !== s.dpr) {
+        s.w = w; s.h = h; s.dpr = dpr;
+        el.width = Math.round(w * dpr);
+        el.height = Math.round(h * dpr);
+        s.resized = true;
+      }
+      s.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      return s;
+    };
+    watch(el);
+    return s;
+  }
+
+  function loop(fn, fpsCap) {
+    var last = 0, lastDraw = 0, logged = false, cap = fpsCap || 60;
+    function frame(now) {
+      requestAnimationFrame(frame);
+      if (!visibleNow()) { last = 0; return; }
+      if (now - lastDraw < 1000 / cap - 2) return;
+      var dt = last ? Math.min((now - last) / 1000, 0.1) : 1 / 60;
+      last = lastDraw = now;
+      try { fn(dt, now / 1000); } catch (e) {
+        if (!logged) { logged = true; console.error('[cyber-kit]', e); }
+      }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  function resetCtx(ctx) {
+    ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.shadowBlur = 0;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+  }
+
+  // ------------------------------------------------------------------ small utils
+  function hash(str) {
+    var h = 2166136261;
+    str = String(str);
+    for (var i = 0; i < str.length; i++) { h ^= str.charCodeAt(i); h = Math.imul(h, 16777619); }
+    return ((h >>> 0) % 100000) / 100000;
+  }
+
+  function prng(seed) {
+    var a = (seed * 4294967296) >>> 0 || 1;
+    return function () {
+      a = (a + 0x6D2B79F5) >>> 0;
+      var t = Math.imul(a ^ (a >>> 15), a | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function fmtBytes(b) {
+    if (hasSdk && moltamp.fmt && moltamp.fmt.bytes) return moltamp.fmt.bytes(b);
+    var u = ['B', 'KB', 'MB', 'GB'], i = 0;
+    while (b >= 1024 && i < u.length - 1) { b /= 1024; i++; }
+    return b.toFixed(i ? 1 : 0) + ' ' + u[i];
+  }
+
+  // Skin switches update CSS variables live; re-resolve once a second.
+  poll(1000, refreshColors);
+
+  return {
+    c: c, rgb: rgb, rgba: rgba, mix: mix, lum: lum, refreshColors: refreshColors,
+    poll: poll, subscribe: subscribe, call: call, font: font,
+    state: currentState, stateInfo: state, onState: function (cb) { stateListeners.push(cb); },
+    telemetry: telemetry, telemetryLevel: telemetryLevel,
+    onEvents: onEvents, isFailure: isFailure, toolLabel: toolLabel,
+    surface: surface, loop: loop, resetCtx: resetCtx, isVisible: visibleNow,
+    hash: hash, prng: prng, fmtBytes: fmtBytes,
+    meta: (hasSdk && moltamp.meta) || { context: 'panel' }
+  };
+})();
+
+// Night Window: a window onto a neon city at night; system.weather drives rain, snow, fog, storms and the sky.
+(function () {
+  'use strict';
+  var canvas = document.getElementById('cy-canvas');
+  var S = CK.surface(canvas);
+  var label = document.getElementById('cy-label');
+  var input = document.getElementById('nl-city');
+  var REFRESH_MS = 10 * 60 * 1000;
+  var KANJI = { rain: '雨', snow: '雪', fog: '霧', thunder: '雷', cloud: '曇', clear: '晴' };
+
+  // status: loading | ok | need-city | error
+  var wx = { status: 'loading', kind: 'clear', intensity: 0.5, temp: null, city: '', condition: '', humidity: null, wind: 0 };
+  var cfg = {}, city = '', lastText = '', t = 0;
+  // Smoothed weather amounts, so a change of weather fades in instead of popping.
+  var amt = { rain: 0, snow: 0, fog: 0, cloud: 0, storm: 0, clear: 1 }, snap = true;
+
+  // ------------------------------------------------------------------ weather
+  function classifyText(s) {
+    s = String(s || '').toLowerCase();
+    if (!s) return null;
+    if (/thunder|storm|lightning|orage/.test(s)) return 'thunder';
+    if (/snow|sleet|blizzard|flurr|neige|ice pellet|hail|gr[eê]le/.test(s)) return 'snow';
+    if (/rain|drizzle|shower|pluie|averse|bruine|precip/.test(s)) return 'rain';
+    if (/fog|mist|haze|smoke|brume|brouillard|dust|sand/.test(s)) return 'fog';
+    if (/overcast|cloud|nuage|couvert/.test(s)) return 'cloud';
+    if (/clear|sun|fair|d[eé]gag|ensoleill|moon|night/.test(s)) return 'clear';
+    return null;
+  }
+
+  // Icons may be emoji, OpenWeatherMap codes ("10n") or WWO codes ("296"): try all three.
+  function classifyIcon(ic) {
+    ic = String(ic || '').trim();
+    if (!ic) return null;
+    if (/⛈|🌩/.test(ic)) return 'thunder';
+    if (/🌨|❄|☃/.test(ic)) return 'snow';
+    if (/🌧|☔|🌦/.test(ic)) return 'rain';
+    if (/🌫/.test(ic)) return 'fog';
+    if (/☁|⛅|🌥|🌤/.test(ic)) return 'cloud';
+    if (/☀|🌙|🌕|🌑|✨/.test(ic)) return 'clear';
+    var owm = /^(\d\d)[dn]?$/.exec(ic);
+    if (owm) {
+      var o = +owm[1];
+      return o === 1 ? 'clear' : o <= 4 ? 'cloud' : o === 9 || o === 10 ? 'rain' : o === 11 ? 'thunder' : o === 13 ? 'snow' : o === 50 ? 'fog' : null;
+    }
+    if (/^\d{3}$/.test(ic)) {
+      var n = +ic;
+      if (n === 113) return 'clear';
+      if (n === 116 || n === 119 || n === 122) return 'cloud';
+      if (n === 143 || n === 248 || n === 260) return 'fog';
+      if (n === 200 || (n >= 386 && n <= 395)) return 'thunder';
+      if (n === 179 || n === 182 || n === 185 || n === 227 || n === 230 || n === 281 || n === 284 ||
+        (n >= 311 && n <= 338) || n === 350 || (n >= 362 && n <= 377)) return 'snow';
+      if (n >= 176) return 'rain';
+    }
+    return classifyText(ic);
+  }
+
+  function intensityOf(s, kind) {
+    s = String(s || '').toLowerCase();
+    if (/heavy|torrential|violent|intense|fort|blizzard/.test(s)) return 1;
+    if (kind === 'cloud') return /partly|partial|few|scattered|partiel|[eé]claircie/.test(s) ? 0.45 : 0.9;
+    if (/light|drizzle|patchy|slight|faible|fine|l[eé]g[eè]re?/.test(s)) return 0.35;
+    return 0.65;
+  }
+
+  function num(v) {
+    if (typeof v === 'number') return isFinite(v) ? v : null;
+    var n = parseFloat(String(v === undefined || v === null ? '' : v).replace(',', '.'));
+    return isFinite(n) ? n : null;
+  }
+
+  function apply(r) {
+    var kind = classifyText(r.condition) || classifyIcon(r.icon) || 'clear';
+    wx.status = 'ok';
+    wx.kind = kind;
+    wx.intensity = intensityOf(r.condition, kind);
+    wx.temp = num(r.temp);
+    wx.condition = String(r.condition || '');
+    wx.humidity = num(r.humidity);
+    var wind = r.wind && typeof r.wind === 'object' ? r.wind.speed : r.wind;
+    wx.wind = Math.max(0, num(wind) || 0);
+    if (/mph/i.test(String(r.wind))) wx.wind *= 1.6;
+    wx.city = String(r.city || city || '');
+  }
+
+  function refresh() {
+    var req = city ? CK.call('system.weather', city) : CK.call('system.weather');
+    req.then(function (r) {
+      if (r && typeof r === 'object' && (r.condition !== undefined || r.temp !== undefined || r.icon !== undefined)) apply(r);
+      else wx.status = city ? 'error' : 'need-city';
+    }).catch(function () {
+      // Keep the last good weather on screen; only the sign says the signal is gone.
+      wx.status = city ? 'error' : 'need-city';
+    });
+  }
+
+  function saveCity() {
+    if (typeof moltamp === 'undefined' || !moltamp.settings) return;
+    moltamp.settings.read().then(function (c) {
+      cfg = Object.assign({}, c || {});
+      if (city) cfg.location = city; else delete cfg.location;
+      return moltamp.settings.write(cfg);
+    }).catch(function () { /* settings unavailable: the city still applies until reload */ });
+  }
+
+  if (typeof moltamp !== 'undefined' && moltamp.settings) {
+    moltamp.settings.read().then(function (c) {
+      cfg = c || {};
+      city = typeof cfg.location === 'string' ? cfg.location.trim() : '';
+      refresh();
+    }).catch(refresh);
+  } else {
+    refresh();
+  }
+  CK.poll(REFRESH_MS, refresh);
+
+  // ------------------------------------------------------------------ city input
+  function openInput() {
+    input.value = city || (wx.status === 'ok' ? wx.city : '');
+    input.style.display = 'block';
+    input.focus();
+    input.select();
+  }
+  function closeInput() { input.style.display = 'none'; }
+  input.addEventListener('keydown', function (e) {
+    e.stopPropagation();
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      var v = input.value.trim();
+      closeInput();
+      if (v === city) return;
+      city = v;
+      wx.status = 'loading';
+      saveCity();
+      refresh();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closeInput();
+    }
+  });
+  input.addEventListener('blur', closeInput);
+
+  var signBox = null;
+  function inSign(e) {
+    var r = canvas.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+    return signBox && x >= signBox.x && x <= signBox.x + signBox.w && y >= signBox.y && y <= signBox.y + signBox.h;
+  }
+  // Left button only: right-click and ctrl-click belong to MOLTamp's slot menu.
+  canvas.addEventListener('click', function (e) {
+    if (e.button !== 0 || e.ctrlKey) return;
+    if (inSign(e) || wx.status === 'need-city') openInput();
+  });
+  canvas.addEventListener('mousemove', function (e) { canvas.style.cursor = inSign(e) ? 'pointer' : ''; });
+
+  // ------------------------------------------------------------------ city layers (pre-rendered)
+  var layers = [], layerKey = '', antennas = [], neons = [];
+  function genCity(w, h, dpr, light) {
+    layers = []; antennas = []; neons = [];
+    var r = CK.prng(0.4242);
+    var specs = [
+      { top: 0.28, low: 0.62, wMin: 0.05, wMax: 0.11, shade: light ? 0.32 : 0.1, lit: 0.12, haze: 0.55 },
+      { top: 0.4, low: 0.78, wMin: 0.07, wMax: 0.16, shade: light ? 0.46 : 0.06, lit: 0.22, haze: 0.25 },
+      { top: 0.62, low: 0.9, wMin: 0.1, wMax: 0.24, shade: light ? 0.6 : 0.03, lit: 0.3, haze: 0 }
+    ];
+    var winCols = ['yellow', 'yellow', 'yellow', 'cyan', 'accent', 'magenta'];
+    for (var L = 0; L < specs.length; L++) {
+      var sp = specs[L], cv = document.createElement('canvas');
+      cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+      var g = cv.getContext('2d');
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      var unit = Math.max(h, w * 0.35), x = -unit * 0.02;
+      while (x < w) {
+        var bw = unit * (sp.wMin + r() * (sp.wMax - sp.wMin)) * (0.7 + 0.6 * (L === 2 ? 1 : r()));
+        var top = h * (sp.top + r() * (sp.low - sp.top) * 0.6);
+        // Building body: skin background pulled towards the foreground colour.
+        g.fillStyle = CK.mix('bg', 'fg', sp.shade + r() * 0.04);
+        g.fillRect(x, top, bw, h - top);
+        if (r() < 0.35) { // stepped crown
+          var cw = bw * (0.3 + r() * 0.4), ch = (h - top) * (0.06 + r() * 0.1);
+          g.fillRect(x + (bw - cw) / 2, top - ch, cw, ch);
+          if (r() < 0.6) antennas.push({ layer: L, x: x + bw / 2, y: top - ch - h * 0.04, p: r() * 6.28 });
+          g.fillRect(x + bw / 2 - 0.5, top - ch - h * 0.04, 1, h * 0.04);
+        }
+        // Lit windows
+        var cell = Math.max(2.2, h * (0.014 + L * 0.004)), gap = cell * 0.8;
+        for (var wy = top + gap; wy < h - gap; wy += cell + gap) {
+          for (var wxp = x + gap; wxp < x + bw - cell; wxp += cell + gap) {
+            if (r() > sp.lit) continue;
+            g.fillStyle = CK.rgba(winCols[(r() * winCols.length) | 0], 0.35 + r() * 0.45);
+            g.fillRect(wxp, wy, cell, cell * 0.9);
+          }
+        }
+        // Vertical neon signs on some near and middle buildings
+        if (L > 0 && r() < 0.28 && bw > unit * 0.06) {
+          neons.push({ layer: L, x: x + bw * (0.1 + r() * 0.6), y: top + (h - top) * (0.1 + r() * 0.3),
+            w: Math.max(3, bw * 0.12), h: (h - top) * (0.25 + r() * 0.3), col: ['magenta', 'cyan', 'accent', 'red'][(r() * 4) | 0], p: r() * 10 });
+        }
+        x += bw + unit * (L === 2 ? 0.004 : 0.01) * r();
+      }
+      layers.push({ cv: cv, haze: sp.haze });
+    }
+  }
+
+  // ------------------------------------------------------------------ particles
+  var drops = [], runners = [], rain = [], flakes = [], cars = [], stars = [], clouds = [];
+  var flash = 0, bolt = null, nextBolt = 3, sillSnow = 0;
+  function seedParticles(w, h) {
+    var r = CK.prng(0.1717);
+    stars = [];
+    for (var i = 0; i < 90; i++) stars.push({ x: r() * w, y: r() * h * 0.55, s: 0.5 + r() * 1.2, p: r() * 6.28 });
+    clouds = [];
+    for (i = 0; i < 7; i++) clouds.push({ x: r() * w * 1.3, y: h * (0.05 + r() * 0.35), rx: w * (0.12 + r() * 0.2), ry: h * (0.05 + r() * 0.08), v: 4 + r() * 8 });
+    drops = [];
+    var n = Math.min(170, Math.round(w * h / 2400));
+    for (i = 0; i < n; i++) drops.push({ x: r() * w, y: r() * h, r: 0.9 + Math.pow(r(), 2.5) * 3.6, on: r() * 0.9 });
+    runners = [];
+  }
+
+  function spawnCar(w, h) {
+    var dir = Math.random() < 0.5 ? 1 : -1;
+    cars.push({ x: dir > 0 ? -20 : w + 20, y: h * (0.12 + Math.random() * 0.45), v: dir * (25 + Math.random() * 45),
+      col: Math.random() < 0.5 ? 'cyan' : 'red', blink: Math.random() * 6 });
+  }
+
+  function approach(k, target, dt, tau) { amt[k] += (target - amt[k]) * (1 - Math.exp(-dt / tau)); }
+
+  // ------------------------------------------------------------------ frame
+  CK.loop(function (dt) {
+    S.fit();
+    var ctx = S.ctx, w = S.w, h = S.h, light = CK.lum('bg') > 0.5;
+    t += dt;
+    var key = [w, h, S.dpr, CK.c.bg, CK.c.fg, CK.c.accent, CK.c.yellow, CK.c.cyan, CK.c.magenta].join('|');
+    if (S.resized) { seedParticles(w, h); S.resized = false; }
+    if (key !== layerKey) { layerKey = key; genCity(w, h, S.dpr, light); }
+
+    var k = wx.kind, inten = wx.intensity, target = {
+      rain: k === 'rain' || k === 'thunder' ? inten : 0,
+      snow: k === 'snow' ? inten : 0,
+      fog: k === 'fog' ? 0.5 + inten * 0.5 : (wx.humidity || 0) > 92 ? 0.25 : 0,
+      cloud: k === 'cloud' ? inten : k === 'rain' || k === 'snow' || k === 'thunder' ? 0.9 : k === 'fog' ? 0.5 : 0.05,
+      storm: k === 'thunder' ? 1 : 0,
+      clear: k === 'clear' ? 1 : 0
+    };
+    // The first real weather shows at once; later changes fade in.
+    if (snap && wx.status === 'ok') { snap = false; for (var tk in target) amt[tk] = target[tk]; }
+    for (var ak in target) approach(ak, target[ak], dt, ak === 'storm' ? 1 : 1.8);
+
+    // Sky: local time sets night, dusk/dawn warmth and the little daylight there is behind the neon.
+    var d = new Date(), hr = d.getHours() + d.getMinutes() / 60;
+    var dayness = hr < 6 || hr > 21 ? 0 : hr < 8 ? (hr - 6) / 2 : hr > 19 ? (21 - hr) / 2 : 1;
+    var warm = Math.max(0, 1 - Math.abs(hr - 20) / 1.5) + Math.max(0, 1 - Math.abs(hr - 7) / 1.5);
+    var overcast = Math.min(1, amt.cloud + amt.fog * 0.5);
+    var sky = ctx.createLinearGradient(0, 0, 0, h);
+    sky.addColorStop(0, CK.mix('bg', 'blue', (light ? 0.25 : 0.14) + dayness * 0.12 - overcast * 0.06));
+    sky.addColorStop(0.65, CK.mix('bg', warm > 0.05 ? 'yellow' : 'magenta', Math.min(0.4, 0.14 + warm * 0.18 + dayness * 0.05)));
+    sky.addColorStop(1, CK.mix('bg', 'accent', 0.22));
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, w, h);
+    if (overcast > 0.02) {
+      ctx.fillStyle = CK.mix('bg', 'dim', 0.12, overcast * 0.6);
+      ctx.fillRect(0, 0, w, h);
+    }
+
+    // Stars and moon when the sky is clear
+    var clearSky = Math.max(0, 1 - overcast * 1.3) * (1 - dayness * 0.8);
+    if (clearSky > 0.02) {
+      ctx.fillStyle = CK.c.fg;
+      for (var i = 0; i < stars.length; i++) {
+        var st = stars[i];
+        ctx.globalAlpha = clearSky * (0.25 + 0.5 * (0.5 + 0.5 * Math.sin(t * 1.7 + st.p)));
+        ctx.fillRect(st.x, st.y, st.s, st.s);
+      }
+      var mr = Math.max(6, Math.min(w, h) * 0.08), mx = w * 0.82, my = h * 0.2;
+      ctx.globalAlpha = clearSky;
+      var halo = ctx.createRadialGradient(mx, my, mr * 0.5, mx, my, mr * 4);
+      halo.addColorStop(0, CK.rgba('yellow', 0.25));
+      halo.addColorStop(1, CK.rgba('yellow', 0));
+      ctx.fillStyle = halo;
+      ctx.fillRect(mx - mr * 4, my - mr * 4, mr * 8, mr * 8);
+      // Crescent = the moon disc minus an offset disc, clipped so nothing paints over the sky.
+      ctx.save();
+      ctx.beginPath(); ctx.arc(mx, my, mr, 0, 6.283); ctx.clip();
+      ctx.fillStyle = CK.mix('yellow', 'fg', 0.6);
+      ctx.beginPath(); ctx.arc(mx, my, mr, 0, 6.283); ctx.arc(mx + mr * 0.45, my - mr * 0.2, mr * 0.9, 0, 6.283); ctx.fill('evenodd');
+      ctx.restore();
+      ctx.globalAlpha = 1;
+    }
+
+    // Clouds
+    if (amt.cloud > 0.02) {
+      for (i = 0; i < clouds.length; i++) {
+        var cl = clouds[i];
+        cl.x += cl.v * dt * (1 + wx.wind / 30);
+        if (cl.x - cl.rx > w) cl.x = -cl.rx;
+        var cg = ctx.createRadialGradient(cl.x, cl.y, 0, cl.x, cl.y, cl.rx);
+        cg.addColorStop(0, CK.mix('dim', 'bg', 0.45, amt.cloud * 0.45));
+        cg.addColorStop(1, CK.mix('dim', 'bg', 0.45, 0));
+        ctx.fillStyle = cg;
+        ctx.save(); ctx.translate(cl.x, cl.y); ctx.scale(1, cl.ry / cl.rx); ctx.translate(-cl.x, -cl.y);
+        ctx.beginPath(); ctx.arc(cl.x, cl.y, cl.rx, 0, 6.283); ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    // Lightning lights the sky from behind the city.
+    if (amt.storm > 0.5) {
+      nextBolt -= dt;
+      if (nextBolt <= 0) {
+        nextBolt = 3 + Math.random() * 8;
+        flash = 1;
+        var bx = w * (0.15 + Math.random() * 0.7), pts = [[bx, 0]], y = 0;
+        while (y < h * 0.55) { y += h * (0.05 + Math.random() * 0.08); bx += (Math.random() - 0.5) * w * 0.06; pts.push([bx, y]); }
+        bolt = { pts: pts, life: 0.18 };
+      }
+    }
+    if (flash > 0.01) {
+      ctx.fillStyle = CK.rgba('fg', flash * 0.35);
+      ctx.fillRect(0, 0, w, h);
+      flash *= Math.exp(-dt * 6);
+    }
+    if (bolt) {
+      bolt.life -= dt;
+      ctx.strokeStyle = CK.rgba('fg', Math.max(0, bolt.life / 0.18));
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      for (i = 0; i < bolt.pts.length; i++) (i ? ctx.lineTo : ctx.moveTo).call(ctx, bolt.pts[i][0], bolt.pts[i][1]);
+      ctx.stroke();
+      if (bolt.life <= 0) bolt = null;
+    }
+
+    // City, far to near, with fog between the layers
+    for (var L = 0; L < layers.length; L++) {
+      ctx.drawImage(layers[L].cv, 0, 0, w, h);
+      for (i = 0; i < antennas.length; i++) {
+        var an = antennas[i];
+        if (an.layer !== L || Math.sin(t * 2.4 + an.p) < 0.6) continue;
+        ctx.fillStyle = CK.rgba('red', 0.9);
+        ctx.fillRect(an.x - 1, an.y - 1, 2, 2);
+      }
+      for (i = 0; i < neons.length; i++) {
+        var ne = neons[i];
+        if (ne.layer !== L) continue;
+        // Most tubes hum steadily; a few stutter.
+        var on = ne.p > 8 ? (Math.sin(t * 23 + ne.p) > -0.6 || Math.sin(t * 0.7 + ne.p) > 0) : true;
+        if (!on) continue;
+        ctx.fillStyle = CK.rgba(ne.col, light ? 0.6 : 0.8);
+        ctx.fillRect(ne.x, ne.y, ne.w, ne.h);
+        ctx.fillStyle = CK.rgba(ne.col, 0.15);
+        ctx.fillRect(ne.x - ne.w, ne.y - ne.w * 0.5, ne.w * 3, ne.h + ne.w);
+      }
+      var fogA = amt.fog * (L === 0 ? 0.55 : L === 1 ? 0.35 : 0.12) + amt.rain * (L === 0 ? 0.18 : 0.06);
+      if (fogA > 0.01) {
+        var fg = ctx.createLinearGradient(0, h * 0.3, 0, h);
+        fg.addColorStop(0, CK.mix('bg', 'dim', 0.35, 0));
+        fg.addColorStop(1, CK.mix('bg', 'dim', 0.35, Math.min(0.8, fogA)));
+        ctx.fillStyle = fg;
+        ctx.fillRect(0, 0, w, h);
+      }
+      if (L === 0) {
+        // Flying cars weave between the far and the middle towers.
+        if (cars.length < 5 && Math.random() < dt * 0.6) spawnCar(w, h);
+        for (i = cars.length - 1; i >= 0; i--) {
+          var car = cars[i];
+          car.x += car.v * dt;
+          if (car.x < -40 || car.x > w + 40) { cars.splice(i, 1); continue; }
+          ctx.fillStyle = CK.rgba(car.col, 0.25);
+          ctx.fillRect(car.x - Math.sign(car.v) * 14, car.y, Math.sign(car.v) * 14, 1);
+          ctx.fillStyle = CK.rgba(car.col, 0.95);
+          ctx.fillRect(car.x - 1, car.y - 1, 2.4, 2);
+          if (Math.sin(t * 8 + car.blink) > 0.7) { ctx.fillStyle = CK.rgba('fg', 0.9); ctx.fillRect(car.x + Math.sign(car.v) * 2, car.y - 1, 1, 1); }
+        }
+      }
+    }
+
+    // Moving fog banks
+    if (amt.fog > 0.02) {
+      for (i = 0; i < 3; i++) {
+        var fy = h * (0.45 + i * 0.18), off = Math.sin(t * 0.15 + i * 2) * w * 0.1;
+        var band = ctx.createLinearGradient(0, fy - h * 0.12, 0, fy + h * 0.12);
+        band.addColorStop(0, CK.mix('bg', 'dim', 0.4, 0));
+        band.addColorStop(0.5, CK.mix('bg', 'dim', 0.45, amt.fog * 0.5));
+        band.addColorStop(1, CK.mix('bg', 'dim', 0.4, 0));
+        ctx.fillStyle = band;
+        ctx.fillRect(off - w * 0.2, fy - h * 0.12, w * 1.4, h * 0.24);
+      }
+    }
+
+    // Rain outside: slanted streaks, slant from the wind
+    var slant = Math.min(0.6, wx.wind / 60) + 0.08;
+    var wantRain = amt.rain > 0.03 ? Math.round(Math.min(340, w * h / 520) * (0.35 + 0.65 * amt.rain)) : 0;
+    while (rain.length < wantRain) rain.push({ x: Math.random() * (w + h * slant), y: Math.random() * h, l: 8 + Math.random() * 16, v: 420 + Math.random() * 280 });
+    if (rain.length > wantRain) rain.length = wantRain;
+    if (rain.length) {
+      ctx.strokeStyle = CK.rgba(light ? 'dim' : 'fg', light ? 0.6 : 0.34);
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      for (i = 0; i < rain.length; i++) {
+        var rd = rain[i];
+        rd.y += rd.v * dt; rd.x -= rd.v * slant * dt;
+        if (rd.y > h || rd.x < -10) { rd.y = -rd.l; rd.x = Math.random() * (w + h * slant); }
+        ctx.moveTo(rd.x, rd.y); ctx.lineTo(rd.x + rd.l * slant, rd.y - rd.l);
+      }
+      ctx.stroke();
+    }
+
+    // Snow
+    var wantSnow = Math.round(Math.min(220, w * h / 1100) * amt.snow);
+    while (flakes.length < wantSnow) flakes.push({ x: Math.random() * w, y: Math.random() * h, r: 0.7 + Math.random() * 1.8, v: 18 + Math.random() * 30, p: Math.random() * 6.28 });
+    if (flakes.length > wantSnow) flakes.length = wantSnow;
+    if (flakes.length) {
+      ctx.fillStyle = CK.mix('fg', 'bg', light ? 0.2 : 0);
+      for (i = 0; i < flakes.length; i++) {
+        var fl = flakes[i];
+        fl.y += fl.v * dt * (0.6 + fl.r * 0.3);
+        fl.x += Math.sin(t * 1.3 + fl.p) * 12 * dt - wx.wind * 0.3 * dt;
+        if (fl.y > h) { fl.y = -3; fl.x = Math.random() * w; }
+        if (fl.x < -3) fl.x = w + 3;
+        ctx.globalAlpha = 0.5 + fl.r * 0.2;
+        ctx.beginPath(); ctx.arc(fl.x, fl.y, fl.r, 0, 6.283); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // Glass: beads that grow, then some of them run down the pane leaving a trail.
+    var wet = Math.max(amt.rain > 0.03 ? 0.4 + amt.rain * 0.6 : 0, amt.storm * 0.8, amt.fog * 0.15);
+    if (wet > 0.03) {
+      for (i = 0; i < drops.length; i++) {
+        var dr = drops[i];
+        if (dr.on > wet) continue;
+        dr.r = Math.min(4.2, dr.r + dt * 0.08 * amt.rain);
+        if (dr.r > 3.2 && runners.length < 6 && Math.random() < dt * 0.4) {
+          runners.push({ x: dr.x, y: dr.y, r: dr.r, v: 10, p: Math.random() * 6.28 });
+          dr.r = 0.6; dr.x = Math.random() * w; dr.y = Math.random() * h;
+        }
+        drawBead(ctx, dr.x, dr.y, dr.r, wet);
+      }
+      for (i = runners.length - 1; i >= 0; i--) {
+        var ru = runners[i];
+        ru.v = Math.min(120, ru.v + 90 * dt);
+        ru.y += ru.v * dt;
+        ru.x += Math.sin(ru.y * 0.12 + ru.p) * 0.4;
+        ctx.strokeStyle = CK.rgba('fg', 0.12 * wet);
+        ctx.lineWidth = ru.r * 0.7;
+        ctx.beginPath(); ctx.moveTo(ru.x, ru.y - Math.min(ru.y, h * 0.25)); ctx.lineTo(ru.x, ru.y); ctx.stroke();
+        drawBead(ctx, ru.x, ru.y, ru.r, wet);
+        if (ru.y > h + 6) runners.splice(i, 1);
+      }
+    }
+
+    // Condensation at the bottom of the pane
+    var mist = Math.min(0.5, (wx.humidity || 50) / 200 + amt.rain * 0.1 + amt.fog * 0.15);
+    var cond = ctx.createLinearGradient(0, h * 0.7, 0, h);
+    cond.addColorStop(0, CK.rgba('fg', 0));
+    cond.addColorStop(1, CK.rgba('fg', mist * (light ? 0.2 : 0.12)));
+    ctx.fillStyle = cond;
+    ctx.fillRect(0, h * 0.7, w, h * 0.3);
+
+    drawFrame(ctx, w, h, dt);
+    drawSign(ctx, w, h);
+    CK.resetCtx(ctx);
+
+    var text;
+    if (wx.status === 'need-city') text = '天気 · click the sign to set your city';
+    else if (wx.status === 'error') text = '無信号 · no weather signal';
+    else if (wx.status === 'loading') text = '天気 · tuning in…';
+    else text = KANJI[wx.kind] + ' · ' + (wx.condition || wx.kind).toLowerCase() + (wx.humidity !== null ? ' · ' + Math.round(wx.humidity) + '%' : '');
+    if (text !== lastText) { lastText = text; label.textContent = text; }
+  }, 30);
+
+  // A bead on the glass: dark lens, bright lower rim (refracted city light), a glint on top.
+  function drawBead(ctx, x, y, r, wet) {
+    var a = 0.45 + 0.55 * wet;
+    ctx.fillStyle = CK.rgba('bg', 0.35 * a);
+    ctx.beginPath(); ctx.arc(x, y + r * 0.15, r, 0, 6.283); ctx.fill();
+    ctx.strokeStyle = CK.rgba('fg', 0.45 * a);
+    ctx.lineWidth = Math.max(0.7, r * 0.3);
+    ctx.beginPath(); ctx.arc(x, y, r * 0.8, 0.5, 2.6); ctx.stroke();
+    ctx.fillStyle = CK.rgba('fg', 0.8 * a);
+    ctx.fillRect(x - r * 0.45, y - r * 0.55, Math.max(0.9, r * 0.32), Math.max(0.9, r * 0.32));
+  }
+
+  // Window frame: outer casing, mullions sized to the slot, a sill where snow piles up.
+  function drawFrame(ctx, w, h, dt) {
+    var f = Math.max(3, Math.min(w, h) * 0.035), col = CK.mix('bg', 'dim', 0.18), edge = CK.mix('bg', 'dim', 0.32);
+    ctx.fillStyle = col;
+    ctx.fillRect(0, 0, w, f); ctx.fillRect(0, h - f * 1.6, w, f * 1.6);
+    ctx.fillRect(0, 0, f, h); ctx.fillRect(w - f, 0, f, h);
+    var panes = w > h * 2.6 ? 3 : w > h * 1.2 ? 2 : 1;
+    for (var i = 1; i < panes; i++) ctx.fillRect(w * i / panes - f * 0.35, 0, f * 0.7, h);
+    if (h > 160 && panes < 3) ctx.fillRect(0, h * 0.42 - f * 0.3, w, f * 0.6);
+    ctx.fillStyle = edge;
+    ctx.fillRect(f, h - f * 1.6, w - 2 * f, 1);
+    sillSnow = Math.max(0, Math.min(f * 0.9, sillSnow + (amt.snow > 0.2 ? dt * 0.08 : -dt * 0.05)));
+    if (sillSnow > 0.3) {
+      ctx.fillStyle = CK.mix('fg', 'bg', 0.1);
+      ctx.fillRect(f, h - f * 1.6 - sillSnow, w - 2 * f, sillSnow);
+    }
+    // Faint reflection of the room on the glass
+    var refl = ctx.createLinearGradient(0, 0, w, h);
+    refl.addColorStop(0, CK.rgba('fg', 0.05));
+    refl.addColorStop(0.35, CK.rgba('fg', 0));
+    refl.addColorStop(0.6, CK.rgba('fg', 0.025));
+    refl.addColorStop(1, CK.rgba('fg', 0));
+    ctx.fillStyle = refl;
+    ctx.fillRect(f, f, w - 2 * f, h - f * 2.6);
+  }
+
+  // Neon sign: city and temperature; it is also the button that sets the city.
+  function drawSign(ctx, w, h) {
+    var size = Math.max(9, Math.min(22, h * 0.085, w * 0.05));
+    var txt;
+    if (wx.status === 'need-city') txt = 'SET CITY ✎';
+    else if (wx.status === 'loading' && !wx.city) txt = '· · ·';
+    else if (wx.status === 'error' && !wx.city) txt = 'NO SIGNAL';
+    else txt = (wx.city || city || '?').toUpperCase() + (wx.temp !== null ? '  ' + Math.round(wx.temp) + '°' : '');
+    if (wx.status === 'error' && wx.city) txt += '  ⚠';
+    ctx.font = CK.font(size, 'bold');
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'left';
+    var tw = ctx.measureText(txt).width, pad = size * 0.55, f = Math.max(3, Math.min(w, h) * 0.035);
+    var bx = f + size * 0.6, by = f + size * 0.5, bw = tw + pad * 2, bh = size * 1.7;
+    signBox = { x: bx, y: by, w: bw, h: bh };
+    var col = wx.status === 'error' ? 'red' : wx.status === 'need-city' ? 'yellow' : 'magenta';
+    // Occasional stutter, like an old tube
+    var on = Math.sin(t * 0.9) > -0.97 || Math.sin(t * 31) > 0;
+    ctx.fillStyle = CK.rgba('bg', 0.55);
+    ctx.fillRect(bx, by, bw, bh);
+    ctx.shadowColor = CK.c[col];
+    ctx.shadowBlur = on ? size * 0.8 : 0;
+    ctx.strokeStyle = CK.rgba(col, on ? 0.95 : 0.3);
+    ctx.lineWidth = Math.max(1, size * 0.09);
+    ctx.strokeRect(bx + 0.5, by + 0.5, bw - 1, bh - 1);
+    ctx.fillStyle = on ? CK.mix(col, 'fg', 0.35) : CK.rgba(col, 0.35);
+    ctx.fillText(txt, bx + pad, by + bh / 2 + 0.5);
+    ctx.shadowBlur = 0;
+  }
+})();
+</script>
