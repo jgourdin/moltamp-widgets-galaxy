@@ -5,9 +5,9 @@
 // Author: j0j0 · License: MIT
 
 var ARMS = 3;
-var ARM_STARS = 1500;
-var BULGE = 260;
-var DUST = 300;
+var ARM_STARS = 900;
+var BULGE = 180;
+var DUST = 170;
 var N = ARM_STARS + BULGE + DUST;
 var FIELD = 150;
 var MAX_FLARES = 4;
@@ -40,6 +40,10 @@ for (q = 0; q < MAX_METEORS; q++) meteors.push({ life: 0, x: 0, y: 0, vx: 0, vy:
 
 var t = 0;
 var rot = 0;
+var lastNow = 0;
+// Stars are batched per colour bucket and alpha level into Path2D objects: a few fills per frame instead of one per star.
+var LEVELS = 4;
+var HAS_PATH2D = typeof Path2D !== 'undefined';
 var bassS = 0;
 var midS = 0;
 var highS = 0;
@@ -153,25 +157,30 @@ module.exports = function (ctx, data, W, H, colors, beat) {
   data = data || [];
   beat = beat || { decay: 0, isBeat: false };
   resolvePalette(colors);
+  // Everything moves on real time (f = elapsed frames at 60 fps), so a slow frame never slows the dance down.
+  var nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  var dt = lastNow ? Math.min(0.1, Math.max(0.001, (nowMs - lastNow) / 1000)) : 1 / 60;
+  lastNow = nowMs;
+  var f60 = dt * 60;
   // Our own kick detector backs up MOLTamp's beat flag, which can miss soft or busy mixes:
   // a bass hit clearly above its recent average, rising, at most ~5 per second.
   var kickNow = band(data, 1, 7);
-  kickAvg += (kickNow - kickAvg) * 0.04;
-  kickCool -= 1 / 60;
+  kickAvg += (kickNow - kickAvg) * (1 - Math.pow(0.96, f60));
+  kickCool -= dt;
   var onset = kickNow > kickAvg * 1.22 + 0.035 && kickNow - kickPrev > 0.02 && kickCool <= 0;
   kickPrev = kickNow;
   if (onset || beat.isBeat) { kick = 1; kickCool = 0.2; }
-  kick *= 0.9;
+  kick *= Math.pow(0.9, f60);
   var hit = onset || beat.isBeat;
   var decay = Math.max(beat.decay || 0, kick);
 
-  t += 1 / 60;
-  bassS += (band(data, 1, 7) - bassS) * 0.15;
-  midS += (band(data, 8, 40) - midS) * 0.12;
-  highS += (band(data, 48, 110) - highS) * 0.2;
-  quiet = bassS + midS + highS < 0.03 ? quiet + 1 / 60 : 0;
+  t += dt;
+  bassS += (band(data, 1, 7) - bassS) * (1 - Math.pow(0.85, f60));
+  midS += (band(data, 8, 40) - midS) * (1 - Math.pow(0.88, f60));
+  highS += (band(data, 48, 110) - highS) * (1 - Math.pow(0.8, f60));
+  quiet = bassS + midS + highS < 0.03 ? quiet + dt : 0;
   // The bass is the engine: it spins the arms up to ~10x the idle speed, and each kick gives them a shove.
-  rot += 0.0018 + Math.min(1, bassS * 1.5) * 0.045 + decay * 0.02;
+  rot += (0.0018 + Math.min(1, bassS * 1.5) * 0.045 + decay * 0.02) * f60;
 
   // Framing: a tilted disc in a panel, a nearly edge-on one stretched across a wide banner.
   var aspect = H / W;
@@ -193,9 +202,20 @@ module.exports = function (ctx, data, W, H, colors, beat) {
 
   // Background field: faint stars over the whole canvas, livelier with the highs.
   ctx.fillStyle = pal.text;
-  for (var i = 0; i < FIELD; i++) {
-    ctx.globalAlpha = (light ? 0.18 : 0.12) + (0.25 + highS * 0.5) * (0.5 + 0.5 * Math.sin(t * 1.3 + fp[i]));
-    ctx.fillRect(fx[i] * W, fy[i] * H, 1, 1);
+  var fieldBase = light ? 0.18 : 0.12, fieldAmp = 0.25 + highS * 0.5;
+  if (HAS_PATH2D) {
+    var fpaths = [];
+    for (var fl0 = 0; fl0 < LEVELS; fl0++) fpaths.push(new Path2D());
+    for (var i = 0; i < FIELD; i++) {
+      var fa = fieldBase + fieldAmp * (0.5 + 0.5 * Math.sin(t * 1.3 + fp[i]));
+      fpaths[Math.min(LEVELS - 1, Math.floor(fa * LEVELS))].rect(fx[i] * W, fy[i] * H, 1, 1);
+    }
+    for (fl0 = 0; fl0 < LEVELS; fl0++) { ctx.globalAlpha = (fl0 + 0.6) / LEVELS; ctx.fill(fpaths[fl0]); }
+  } else {
+    for (i = 0; i < FIELD; i++) {
+      ctx.globalAlpha = fieldBase + fieldAmp * (0.5 + 0.5 * Math.sin(t * 1.3 + fp[i]));
+      ctx.fillRect(fx[i] * W, fy[i] * H, 1, 1);
+    }
   }
 
   // Halo and nebula, drawn as ellipses in the disc's plane.
@@ -224,6 +244,8 @@ module.exports = function (ctx, data, W, H, colors, beat) {
   ctx.globalCompositeOperation = add;
   for (var b = 0; b < BUCKETS; b++) {
     ctx.fillStyle = pal[BUCKET_ROLE[b]];
+    var paths = null;
+    if (HAS_PATH2D) { paths = []; for (var lv = 0; lv < LEVELS; lv++) paths.push(new Path2D()); }
     for (var k = bucketStart[b]; k < bucketStart[b + 1]; k++) {
       var s = order[k];
       var r = sr[s];
@@ -245,10 +267,22 @@ module.exports = function (ctx, data, W, H, colors, beat) {
       if (r > 0.85) a *= (1 - r) / 0.15 + 0.15;
       if (sd[s] === 2) a = sb[s] * (0.6 + midS * 1.4) * (light ? 0.6 : 1);
       if (light && sd[s] !== 2) a *= 1.5;
-      ctx.globalAlpha = a > 1 ? 1 : a < 0 ? 0 : a;
+      a = a > 1 ? 1 : a < 0 ? 0 : a;
       var size = sd[s] === 2 ? 3 : (sb[s] > 0.9 ? 1.8 : 1.1) * (light ? 1.25 : 1);
       if (r < 0.3) size *= 1 + decay * 0.7 * (1 - r / 0.3);
-      ctx.fillRect(x - size / 2, y - size / 2, size, size);
+      if (paths) {
+        if (a < 0.04) continue;
+        paths[Math.min(LEVELS - 1, Math.floor(a * LEVELS))].rect(x - size / 2, y - size / 2, size, size);
+      } else {
+        ctx.globalAlpha = a;
+        ctx.fillRect(x - size / 2, y - size / 2, size, size);
+      }
+    }
+    if (paths) {
+      for (lv = 0; lv < LEVELS; lv++) {
+        ctx.globalAlpha = (lv + 0.6) / LEVELS;
+        ctx.fill(paths[lv]);
+      }
     }
   }
 
@@ -293,7 +327,7 @@ module.exports = function (ctx, data, W, H, colors, beat) {
   for (f = 0; f < MAX_FLARES; f++) {
     var fl = flares[f];
     if (fl.life <= 0) continue;
-    fl.life -= 0.045;
+    fl.life -= 0.045 * f60;
     ctx.globalAlpha = Math.max(0, fl.life) * 0.7;
     ctx.beginPath();
     ctx.arc(0, 0, coreR * (1 + (1 - fl.life) * 2.2), 0, 6.2832);
@@ -334,9 +368,9 @@ module.exports = function (ctx, data, W, H, colors, beat) {
   for (m = 0; m < MAX_METEORS; m++) {
     mt = meteors[m];
     if (mt.life <= 0) continue;
-    mt.x += mt.vx;
-    mt.y += mt.vy;
-    mt.life -= 0.03;
+    mt.x += mt.vx * f60;
+    mt.y += mt.vy * f60;
+    mt.life -= 0.03 * f60;
     ctx.globalAlpha = Math.max(0, mt.life) * 0.8;
     ctx.beginPath();
     ctx.moveTo(mt.x, mt.y);
@@ -362,3 +396,42 @@ module.exports = function (ctx, data, W, H, colors, beat) {
     ctx.textBaseline = 'alphabetic';
   }
 };
+
+// audio-frontend v1 — shared input stage of the MOLTamp Widgets Galaxy visualizers (MIT, j0j0).
+// MOLTamp's FFT can arrive far below full scale (quiet output, 0.8 smoothing), which leaves every effect built on
+// level thresholds dead and starves MOLTamp's own beat detector. Before the renderer runs, the spectrum is brought
+// back to a usable range (peaks tracked over ~4 s, raised to ~200/255, gain 1x-6x, silence left alone), and a kick
+// detector on that spectrum backs up the beat flag and decay.
+;(function () {
+  var inner = module.exports;
+  if (typeof inner !== 'function') return;
+  var ref = 0, last = 0, out = null, kAvg = 0, kPrev = 0, cool = 0, own = 0;
+  module.exports = function (ctx, data, W, H, colors, beat, waveData) {
+    var now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    var dt = last ? Math.min(0.2, Math.max(0.001, (now - last) / 1000)) : 1 / 60;
+    last = now;
+    var src = beat || {}, onset = false;
+    if (data && data.length > 9) {
+      var n = data.length, peak = 0, i;
+      for (i = 1; i < n; i++) if (data[i] > peak) peak = data[i];
+      ref = Math.max(peak, ref * Math.exp(-dt / 4));
+      var gain = ref > 6 ? Math.max(1, Math.min(6, 200 / Math.max(ref, 24))) : 1;
+      if (gain > 1.02) {
+        if (!out || out.length !== n) out = new Uint8Array(n);
+        for (i = 0; i < n; i++) { var v = data[i] * gain; out[i] = v > 255 ? 255 : v; }
+        data = out;
+      }
+      var b = 0;
+      for (i = 1; i < 9; i++) b += data[i];
+      b /= 8 * 255;
+      kAvg += (b - kAvg) * (1 - Math.exp(-dt / 0.7));
+      cool -= dt;
+      onset = b > kAvg * 1.18 + 0.03 && b - kPrev > 0.012 && cool <= 0;
+      kPrev = b;
+      if (onset) { own = 1; cool = 0.22; }
+    }
+    own *= Math.exp(-dt * 5);
+    var merged = { energy: src.energy, peak: src.peak, isBeat: !!src.isBeat || onset, decay: Math.max(src.decay || 0, own) };
+    return inner.call(this, ctx, data, W, H, colors, merged, waveData);
+  };
+})();

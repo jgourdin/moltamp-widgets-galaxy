@@ -284,3 +284,42 @@ module.exports = function (ctx, data, W, H, colors, beat, waveData) {
   ctx.imageSmoothingEnabled = true;
   ctx.drawImage(st.canvas, 0, 0, W, H);
 };
+
+// audio-frontend v1 — shared input stage of the MOLTamp Widgets Galaxy visualizers (MIT, j0j0).
+// MOLTamp's FFT can arrive far below full scale (quiet output, 0.8 smoothing), which leaves every effect built on
+// level thresholds dead and starves MOLTamp's own beat detector. Before the renderer runs, the spectrum is brought
+// back to a usable range (peaks tracked over ~4 s, raised to ~200/255, gain 1x-6x, silence left alone), and a kick
+// detector on that spectrum backs up the beat flag and decay.
+;(function () {
+  var inner = module.exports;
+  if (typeof inner !== 'function') return;
+  var ref = 0, last = 0, out = null, kAvg = 0, kPrev = 0, cool = 0, own = 0;
+  module.exports = function (ctx, data, W, H, colors, beat, waveData) {
+    var now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+    var dt = last ? Math.min(0.2, Math.max(0.001, (now - last) / 1000)) : 1 / 60;
+    last = now;
+    var src = beat || {}, onset = false;
+    if (data && data.length > 9) {
+      var n = data.length, peak = 0, i;
+      for (i = 1; i < n; i++) if (data[i] > peak) peak = data[i];
+      ref = Math.max(peak, ref * Math.exp(-dt / 4));
+      var gain = ref > 6 ? Math.max(1, Math.min(6, 200 / Math.max(ref, 24))) : 1;
+      if (gain > 1.02) {
+        if (!out || out.length !== n) out = new Uint8Array(n);
+        for (i = 0; i < n; i++) { var v = data[i] * gain; out[i] = v > 255 ? 255 : v; }
+        data = out;
+      }
+      var b = 0;
+      for (i = 1; i < 9; i++) b += data[i];
+      b /= 8 * 255;
+      kAvg += (b - kAvg) * (1 - Math.exp(-dt / 0.7));
+      cool -= dt;
+      onset = b > kAvg * 1.18 + 0.03 && b - kPrev > 0.012 && cool <= 0;
+      kPrev = b;
+      if (onset) { own = 1; cool = 0.22; }
+    }
+    own *= Math.exp(-dt * 5);
+    var merged = { energy: src.energy, peak: src.peak, isBeat: !!src.isBeat || onset, decay: Math.max(src.decay || 0, own) };
+    return inner.call(this, ctx, data, W, H, colors, merged, waveData);
+  };
+})();
