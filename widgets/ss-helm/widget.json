@@ -1,0 +1,17 @@
+{
+  "id": "ss-helm",
+  "name": "Helm",
+  "version": "1.0.0",
+  "description": "The bridge's helm console for your Claude session: model, context window, session cost and burn rate, 5-hour and 7-day limits with their reset countdown, and API time, read straight from Claude's status line.",
+  "author": "j0j0",
+  "category": "Starship",
+  "sizing": "fill",
+  "agent": "claude",
+  "api": {
+    "ipc": [
+      "telemetry.read",
+      "stats.read"
+    ],
+    "shellState": true
+  }
+}

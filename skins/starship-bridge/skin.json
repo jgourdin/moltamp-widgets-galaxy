@@ -34,7 +34,7 @@
       "custom-4": true
     },
     "customTabs": {
-      "custom-1": { "label": "HELM", "widgets": ["usage-model", "usage-context", "usage-rates", "user-cyberpunk-cy-context-core"] },
+      "custom-1": { "label": "HELM", "widgets": ["user-starship-ss-helm", "user-cyberpunk-cy-context-core"] },
       "custom-2": { "label": "SCIENCE", "widgets": ["user-starship-ss-codebase-cosmos", "user-starship-ss-agent-fleet"] },
       "custom-3": { "label": "LOG", "widgets": ["user-starship-ss-planet-log", "user-starship-ss-year-in-space"] },
       "custom-4": { "label": "COMMS", "widgets": ["user-starship-ss-deep-space-radio", "music", "visualizer"] }
