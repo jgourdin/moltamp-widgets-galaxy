@@ -1,7 +1,7 @@
 /* ═══════════════════════════════════════════════════════════════
    STARSHIP BRIDGE — MOLTamp Widgets Galaxy skin
-   A starship bridge: slate hull panels with amber instrument lights and
-   teal readouts. The whole bridge follows Claude: a scanner sweeps under
+   A starship bridge: slate hull consoles with amber instrument lights and
+   teal readouts, framed screens and console-button tabs. The whole bridge follows Claude: a scanner sweeps under
    the main screen while it works, yellow alert when it waits for you,
    red alert on errors, a green all-clear when the task is done.
 
@@ -44,8 +44,9 @@
 
   /* ── Typography & layout ───────────────────────────────────── */
   --font-terminal: 'SF Mono', 'JetBrains Mono', 'Menlo', monospace;
-  --font-chrome:   'SF Pro Display', 'Inter', -apple-system, sans-serif;
-  --radius:        3px;
+  /* Console lettering for the chrome; the terminal keeps its own stack. */
+  --font-chrome:   'SF Mono', 'JetBrains Mono', 'Menlo', monospace;
+  --radius:        4px;
 
   /* ── Built-in effects ──────────────────────────────────────── */
   --effect-glow:     1;
@@ -57,6 +58,7 @@
   --effect-scanner:      1;
   --effect-alert-lights: 1;
   --effect-console-glow: 1;
+  --effect-screen-frames: 1;
 
   /* ── Skin palette ──────────────────────────────────────────── */
   --skin-amber:        #ffb347;
@@ -85,6 +87,14 @@
   --skin-glow-yellow: rgba(255, 209, 102, 0.3);
   --skin-glow-clear:  rgba(110, 231, 168, 0.32);
   --skin-glow-none:   rgba(255, 179, 71, 0);
+
+  --skin-deck:          #05080d;
+  --skin-screen-edge:   rgba(255, 179, 71, 0.45);
+  --skin-screen-inner:  rgba(79, 209, 197, 0.16);
+  --skin-module-edge:   rgba(79, 209, 197, 0.14);
+  --skin-tab-active-bg: rgba(255, 179, 71, 0.12);
+  --skin-tab-hover-bg:  rgba(79, 209, 197, 0.08);
+  --skin-titlebar-line: rgba(255, 179, 71, 0.55);
 }
 
 /* ═══════════════════════════════════════════════════════════════
@@ -92,12 +102,20 @@
    ═══════════════════════════════════════════════════════════════ */
 
 .moltamp-shell {
-  background: var(--skin-hull);
+  background: var(--skin-deck);
+}
+
+/* The consoles sit on the hull: a narrow gap of dark plating between panels and terminal. */
+.moltamp-deck {
+  background: var(--skin-deck);
+  gap: 4px;
+  padding: 4px;
 }
 
 .moltamp-titlebar {
   background: var(--skin-titlebar-bg);
   border-bottom: 1px solid var(--skin-border);
+  box-shadow: 0 1px 0 var(--skin-titlebar-line);
   transition: border-color 0.3s ease;
 }
 
@@ -160,6 +178,19 @@
   box-shadow: inset 0 0 26px var(--skin-glow-red);
 }
 
+/* Each screen of the main display is framed like a console monitor. */
+.moltamp-vibes-slot {
+  box-shadow: inset 0 0 0 calc(1px * var(--effect-screen-frames)) var(--skin-screen-edge),
+              inset 0 0 calc(14px * var(--effect-screen-frames)) var(--skin-screen-inner);
+  border-radius: var(--radius);
+}
+
+/* Every widget is a module bolted into its console. */
+.moltamp-widget {
+  border-radius: var(--radius);
+  box-shadow: inset 0 0 0 1px var(--skin-module-edge);
+}
+
 /* ═══════════════════════════════════════════════════════════════
    PANELS — hull plating with a faint instrument grid
    ═══════════════════════════════════════════════════════════════ */
@@ -172,12 +203,10 @@
   background: var(--skin-panel-bg);
 }
 
-.moltamp-panel-left {
-  border-right: 1px solid var(--skin-border);
-}
-
+.moltamp-panel-left,
 .moltamp-panel-right {
-  border-left: 1px solid var(--skin-border);
+  border: 1px solid var(--skin-border);
+  border-radius: var(--radius);
 }
 
 .moltamp-panel-bottom {
@@ -278,19 +307,22 @@
   border-bottom: 1px solid var(--skin-border-soft);
 }
 
+/* Tabs are console buttons: dim at rest, teal under the finger, lit amber when engaged. */
 .moltamp-tab {
   color: var(--c-chrome-dim);
-  letter-spacing: 0.08em;
+  letter-spacing: 0.1em;
+  border-radius: var(--radius) var(--radius) 0 0;
   transition: color 0.2s ease, background-color 0.2s ease;
 }
 
 .moltamp-tab:hover {
-  color: var(--c-chrome-text);
-  background-color: var(--c-chrome-hover);
+  color: var(--skin-teal);
+  background-color: var(--skin-tab-hover-bg);
 }
 
 .moltamp-tab-active {
   color: var(--skin-tab-active);
+  background-color: var(--skin-tab-active-bg);
   border-bottom: 2px solid var(--skin-amber);
 }
 

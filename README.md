@@ -117,7 +117,7 @@ Eight original widgets that turn MOLTamp into a starship flown by Claude: a main
 </table>
 
 > [!TIP]
-> Pair them with the **Starship Bridge** skin: its default layout puts the Viewscreen and Event Horizon on the main screen, the Helm and Context Core on the HELM console, and the rest on SCIENCE, LOG and COMMS. *Deep Space Radio* needs one click to start (browsers never autoplay sound); since visualizers listen to your Mac's audio, Claude's soundtrack makes them dance too.
+> Pair them with the **Starship Bridge** skin: its default layout seats them on the bridge (main screen, TACTICAL, HELM, SCIENCE and COMMS stations, see [Skins](#-skins)). *Deep Space Radio* needs one click to start (browsers never autoplay sound); since visualizers listen to your Mac's audio, Claude's soundtrack makes them dance too.
 
 ## 🌠 Visualizers
 
@@ -161,9 +161,22 @@ Widgets can't hear sound in MOLTamp (they only see Claude), and visualizers can'
 
 Every effect can be switched off in the skin settings: *Glow*, *Nebula*, *Star Field*, *Aurora Line*, *Vibes Glow*, *Claude Pulse*.
 
-<img src="docs/starship/starship-bridge.jpg" width="520" alt="Starship Bridge skin">
+<img src="docs/starship/starship-bridge-layout.jpg" width="100%" alt="Starship Bridge default layout (mock-up)">
+<sub>Mock-up of the default layout: the real widgets in the skin's colours, MOLTamp's own chrome approximated.</sub>
 
-**Starship Bridge**: slate hull panels, amber instrument lights and teal readouts. A scanner sweeps under the main screen while Claude works, the side consoles pulse yellow when it waits for you and red on errors, and a green all-clear flashes when the task is done. Effects: *Glow*, *Hull Grid*, *Scanner*, *Alert Lights*, *Console Glow*.
+**Starship Bridge**: slate hull consoles, amber instrument lights and teal readouts, with framed screens and console-button tabs. Its default layout turns MOLTamp into a bridge:
+
+| Station | What's on it |
+|---|---|
+| 🖥️ Main screen | *Event Horizon* (Claude's context), the *Viewscreen* (what Claude is doing) and the visualizer on *Radio Scope ♪* (your music) |
+| 🎯 TACTICAL (left) | *Agent Fleet* and *Agent Radar*, next to Events, Git and Files |
+| 🕹️ HELM | *Helm* (model, context, cost, limits), *Context Core*, *Cyber Vitals* |
+| 🔭 SCIENCE | *Codebase Cosmos*, *Planet Log*, *Year in Space* |
+| 📡 COMMS | *Deep Space Radio*, Now Playing, Equalizer |
+
+A scanner sweeps under the main screen while Claude works, the consoles pulse yellow when it waits for you and red on errors, and a green all-clear flashes when the task is done. Effects: *Glow*, *Hull Grid*, *Scanner*, *Alert Lights*, *Console Glow*, *Screen Frames*.
+
+<img src="docs/starship/starship-bridge.jpg" width="420" alt="Starship Bridge palette">
 
 ## 🔭 Observatory
 

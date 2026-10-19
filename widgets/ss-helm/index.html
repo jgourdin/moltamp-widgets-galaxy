@@ -530,11 +530,14 @@ var CK = (function () {
       var cols = items.length, gap = pad * 1.5, colW = (w - pad * 2 - gap * (cols - 1)) / cols;
       items.forEach(function (it, i) { gauge(ctx, pad + i * (colW + gap), top, colW, size, it[0], it[1], it[2], it[3], it[4]); });
     } else {
-      var y = top, gw = w - pad * 2;
+      // Short slots (a tab shared with other widgets) drop the notes and shrink the type so all four gauges stay.
+      var y = top, gw = w - pad * 2, avail = h - 18 - top, full = items.length * size * 3.15;
+      var compact = avail < full, sz = compact ? Math.max(8, Math.min(size, (h - 6 - top) / (items.length * 2.5))) : size;
+      // In compact mode the gauges say it all; the label line would sit on the last one.
+      if (compact !== label.hidden) label.hidden = compact;
       for (var i = 0; i < items.length; i++) {
-        if (y + size * 2.6 > h - 18) break;
         var it = items[i];
-        y = gauge(ctx, pad, y, gw, size, it[0], it[1], it[2], it[3], it[4]) + size * 0.55;
+        y = gauge(ctx, pad, y, gw, sz, it[0], it[1], it[2], it[3], compact ? '' : it[4]) + sz * (compact ? 0.35 : 0.55);
       }
     }
     CK.resetCtx(ctx);

@@ -3,46 +3,108 @@
   "name": "Starship Bridge",
   "version": "1.0.0",
   "author": "j0j0",
-  "description": "A starship bridge: slate hull panels, amber instrument lights and teal readouts. A scanner sweeps under the main screen while Claude works, the consoles go to yellow alert when it waits for you and red alert on errors. Made for the Starship pack of the MOLTamp Widgets Galaxy.",
+  "description": "A starship bridge: slate hull consoles, amber instrument lights and teal readouts. The main screen shows the black hole of Claude's context, the warp view of what Claude is doing and the comms scope of your music; the consoles hold the helm, tactical, science and comms stations. Yellow alert when Claude waits for you, red alert on errors. Made for the Starship pack of the MOLTamp Widgets Galaxy.",
   "engine": "1.0",
-  "tags": ["dark", "sci-fi", "space", "amber", "intense"],
+  "tags": [
+    "dark",
+    "sci-fi",
+    "space",
+    "amber",
+    "intense"
+  ],
   "effects": {
     "glow": true,
-    "hull-grid": { "label": "Hull Grid", "description": "Faint instrument grid on the panels" },
-    "scanner": { "label": "Scanner", "description": "Amber scanner sweeping under the main screen, faster while Claude works" },
-    "alert-lights": { "label": "Alert Lights", "description": "Side consoles pulse yellow while Claude waits for you, red on errors" },
-    "console-glow": { "label": "Console Glow", "description": "Panel glow on high activity and a green all-clear when a task is done" }
+    "hull-grid": {
+      "label": "Hull Grid",
+      "description": "Faint instrument grid on the panels"
+    },
+    "scanner": {
+      "label": "Scanner",
+      "description": "Amber scanner sweeping under the main screen, faster while Claude works"
+    },
+    "alert-lights": {
+      "label": "Alert Lights",
+      "description": "Side consoles pulse yellow while Claude waits for you, red on errors"
+    },
+    "console-glow": {
+      "label": "Console Glow",
+      "description": "Panel glow on high activity and a green all-clear when a task is done"
+    },
+    "screen-frames": {
+      "label": "Screen Frames",
+      "description": "Amber frame and inner glow around each screen of the main display"
+    }
   },
   "vibes": {
     "slots": [
-      { "widgetId": "gif", "gifSrc": "assets/vibes.gif", "gifFit": "cover" }
+      {
+        "widgetId": "gif",
+        "gifSrc": "assets/vibes.gif",
+        "gifFit": "cover"
+      }
     ]
   },
   "defaultLayout": {
     "tabAssignments": {
-      "intel": ["events", "files", "agents", "git"],
-      "signal": ["custom-1", "custom-2", "custom-3", "custom-4"]
+      "intel": [
+        "custom-1",
+        "events",
+        "git",
+        "files"
+      ],
+      "signal": [
+        "custom-2",
+        "custom-3",
+        "custom-4"
+      ]
     },
     "tabVisibility": {
-      "events": true,
-      "files": true,
-      "agents": true,
-      "git": true,
       "custom-1": true,
+      "events": true,
+      "git": true,
+      "files": true,
+      "agents": false,
       "custom-2": true,
       "custom-3": true,
       "custom-4": true
     },
     "customTabs": {
-      "custom-1": { "label": "HELM", "widgets": ["user-starship-ss-helm", "user-cyberpunk-cy-context-core"] },
-      "custom-2": { "label": "SCIENCE", "widgets": ["user-starship-ss-codebase-cosmos", "user-starship-ss-agent-fleet"] },
-      "custom-3": { "label": "LOG", "widgets": ["user-starship-ss-planet-log", "user-starship-ss-year-in-space"] },
-      "custom-4": { "label": "COMMS", "widgets": ["user-starship-ss-deep-space-radio", "music", "visualizer"] }
+      "custom-1": {
+        "label": "TACTICAL",
+        "widgets": [
+          "user-starship-ss-agent-fleet",
+          "user-cyberpunk-cy-agent-radar"
+        ]
+      },
+      "custom-2": {
+        "label": "HELM",
+        "widgets": [
+          "user-starship-ss-helm",
+          "user-cyberpunk-cy-context-core",
+          "user-cyberpunk-cy-vitals"
+        ]
+      },
+      "custom-3": {
+        "label": "SCIENCE",
+        "widgets": [
+          "user-starship-ss-codebase-cosmos",
+          "user-starship-ss-planet-log",
+          "user-starship-ss-year-in-space"
+        ]
+      },
+      "custom-4": {
+        "label": "COMMS",
+        "widgets": [
+          "user-starship-ss-deep-space-radio",
+          "music",
+          "equalizer"
+        ]
+      }
     },
     "dimensions": {
-      "leftWidth": 250,
-      "rightWidth": 240,
-      "vibesHeight": 200,
+      "leftWidth": 270,
+      "rightWidth": 290,
+      "vibesHeight": 230,
       "bottomHeight": 26,
       "panelScale": 1,
       "terminalScale": 1
@@ -55,12 +117,22 @@
     },
     "vibesDeck": {
       "slots": [
-        { "widgetId": "user-starship-ss-viewscreen" },
-        { "widgetId": "user-starship-ss-event-horizon" },
-        { "widgetId": "visualizer" }
+        {
+          "widgetId": "user-starship-ss-event-horizon"
+        },
+        {
+          "widgetId": "user-starship-ss-viewscreen"
+        },
+        {
+          "widgetId": "visualizer"
+        }
       ],
-      "widths": [50, 25, 25]
+      "widths": [
+        23,
+        54,
+        23
+      ]
     },
-    "visualizerPreset": "gx-audio-galaxy"
+    "visualizerPreset": "vz-deep-space-radio"
   }
 }
