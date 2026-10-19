@@ -55,7 +55,7 @@ var VK = (function () {
   // ---- audio analysis
   var A = { t: 0, dt: 1 / 60, bass: 0, mid: 0, high: 0, energy: 0, kick: 0, hit: false, beats: 0, bpm: 0, silent: true,
     raw: { bass: 0, mid: 0, high: 0 }, data: null, wave: null };
-  var last = 0, kickAvg = 0, kickPrev = 0, cool = 0, quietFor = 0, hits = [];
+  var last = 0, cool = 0, quietFor = 0, hits = [];
 
   function band(data, from, to) {
     var n = Math.min(to, data.length) - from;
@@ -79,14 +79,11 @@ var VK = (function () {
     A.mid += (m - A.mid) * k;
     A.high += (h - A.high) * (1 - Math.exp(-A.dt / 0.08));
     A.energy += (b * 0.5 + m * 0.35 + h * 0.15 - A.energy) * k;
-    // Kick detector backing up MOLTamp's beat flag: a bass hit clearly above its recent average, rising, ≤ ~5/s.
-    kickAvg += (b - kickAvg) * (1 - Math.exp(-A.dt / 0.7));
+    // Beats come from the shared audio front-end (spectral-flux onsets, appended to every renderer at install):
+    // a level-based detector here would add hits off the beat.
     cool -= A.dt;
-    var onset = b > kickAvg * 1.22 + 0.035 && b - kickPrev > 0.02 && cool <= 0;
-    kickPrev = b;
     beat = beat || {};
-    // MOLTamp's flag and ours often fire on the same hit: the cooldown counts it once.
-    A.hit = (onset || !!beat.isBeat) && cool <= 0;
+    A.hit = !!beat.isBeat && cool <= 0;
     if (A.hit) {
       A.kick = 1;
       cool = 0.2;
@@ -298,21 +295,23 @@ module.exports = function (ctx, data, W, H, colors, beat) {
   module.exports = function (ctx, data, W, H) { render.apply(this, arguments); VK.hint(ctx, W, H); };
 })();
 
-// audio-frontend v1 — shared input stage of the MOLTamp Widgets Galaxy visualizers (MIT, j0j0).
-// MOLTamp's FFT can arrive far below full scale (quiet output, 0.8 smoothing), which leaves every effect built on
-// level thresholds dead and starves MOLTamp's own beat detector. Before the renderer runs, the spectrum is brought
-// back to a usable range (peaks tracked over ~4 s, raised to ~200/255, gain 1x-6x, silence left alone), and a kick
-// detector on that spectrum backs up the beat flag and decay.
+// audio-frontend v2 — shared input stage of the MOLTamp Widgets Galaxy visualizers (MIT, j0j0).
+// MOLTamp's FFT can arrive far below full scale (quiet output) or pinned near the top (loud, compressed masters), and
+// it is smoothed at 0.8: effects keyed to absolute levels end up stuck at their minimum or their maximum. Before the
+// renderer runs, the spectrum is brought back to a usable range (peaks tracked over ~4 s, raised to ~200/255, gain
+// 1x-6x, silence left alone), and onsets are found by spectral flux on the low end (the rise of energy from one frame
+// to the next, above an adaptive mean + 1.25 sigma threshold), which works whatever the level. They back up the beat
+// flag and decay handed to the renderer, in place of MOLTamp's own.
 ;(function () {
   var inner = module.exports;
   if (typeof inner !== 'function') return;
-  var ref = 0, last = 0, out = null, kAvg = 0, kPrev = 0, cool = 0, own = 0;
+  var ref = 0, last = 0, out = null, prev = null, fMean = 0, fVar = 0, cool = 0, own = 0;
   module.exports = function (ctx, data, W, H, colors, beat, waveData) {
     var now = typeof performance !== 'undefined' ? performance.now() : Date.now();
     var dt = last ? Math.min(0.2, Math.max(0.001, (now - last) / 1000)) : 1 / 60;
     last = now;
-    var src = beat || {}, onset = false;
-    if (data && data.length > 9) {
+    var src = beat || {}, onset = false, measured = false;
+    if (data && data.length > 12) {
       var n = data.length, peak = 0, i;
       for (i = 1; i < n; i++) if (data[i] > peak) peak = data[i];
       ref = Math.max(peak, ref * Math.exp(-dt / 4));
@@ -322,17 +321,25 @@ module.exports = function (ctx, data, W, H, colors, beat) {
         for (i = 0; i < n; i++) { var v = data[i] * gain; out[i] = v > 255 ? 255 : v; }
         data = out;
       }
-      var b = 0;
-      for (i = 1; i < 9; i++) b += data[i];
-      b /= 8 * 255;
-      kAvg += (b - kAvg) * (1 - Math.exp(-dt / 0.7));
+      // Spectral flux of the kick / bass region (bins 1-12), normalised to 0..1.
+      if (!prev || prev.length !== n) prev = new Float32Array(n);
+      var flux = 0;
+      for (i = 1; i <= 12; i++) { var d = data[i] - prev[i]; if (d > 0) flux += d; }
+      for (i = 0; i < n; i++) prev[i] = data[i];
+      flux /= 12 * 255;
+      var k = 1 - Math.exp(-dt / 1.0);
+      var diff = flux - fMean;
+      fMean += diff * k;
+      fVar += (diff * diff - fVar) * k;
       cool -= dt;
-      onset = b > kAvg * 1.18 + 0.03 && b - kPrev > 0.012 && cool <= 0;
-      kPrev = b;
-      if (onset) { own = 1; cool = 0.22; }
+      onset = flux > fMean + 1.25 * Math.sqrt(fVar) + 0.004 && cool <= 0;
+      if (onset) { own = 1; cool = 0.18; }
+      measured = true;
     }
     own *= Math.exp(-dt * 5);
-    var merged = { energy: src.energy, peak: src.peak, isBeat: !!src.isBeat || onset, decay: Math.max(src.decay || 0, own) };
+    // MOLTamp's own flag fires off the beat on smoothed or compressed audio: with a spectrum to measure, only our
+    // onsets count; without one, MOLTamp's beat state passes through.
+    var merged = measured ? { energy: src.energy, peak: src.peak, isBeat: onset, decay: own } : src;
     return inner.call(this, ctx, data, W, H, colors, merged, waveData);
   };
 })();
